@@ -43,6 +43,8 @@ class TaskResponse(BaseModel):
     persona: str
     language: str
     starter_code: str
+    files: Optional[Dict[str, str]] = None
+    target_files: Optional[List[str]] = None
     # Notice: test_cases are excluded as per user requirements
 
 class ProjectResponse(BaseModel):
@@ -69,6 +71,7 @@ class CodeSubmission(BaseModel):
     user_id: str
     submitted_code: str
     language: str
+    files: Optional[Dict[str, str]] = None
 
 class QualityFeedback(BaseModel):
     readability: int
@@ -88,6 +91,7 @@ class CodeRunRequest(BaseModel):
     language: str
     code: str
     stdin: Optional[str] = ""
+    files: Optional[Dict[str, str]] = None
 
 class CodeRunResult(BaseModel):
     stdout: str
@@ -100,6 +104,7 @@ class SampleTestsRequest(BaseModel):
     task_id: str
     code: str
     language: str
+    files: Optional[Dict[str, str]] = None
 
 class SampleTestResult(BaseModel):
     index: int

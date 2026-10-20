@@ -20,12 +20,30 @@ def get_task(
         
     task_data = response.data[0]
 
-    # If the task belongs to a project, prevent users who do not own the project from accessing it
-    if task_data.get("project_id") and authenticated_user_id:
-        proj_res = supabase.table("projects").select("user_id").eq("project_id", task_data["project_id"]).execute()
-        if proj_res.data and proj_res.data[0]["user_id"] != authenticated_user_id:
-            raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
-    
+    # Authorization checks:
+    if authenticated_user_id:
+        if task_data.get("project_id"):
+            proj_res = supabase.table("projects").select("user_id").eq("project_id", task_data["project_id"]).execute()
+            if proj_res.data and proj_res.data[0]["user_id"] != authenticated_user_id:
+                raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
+        else:
+            # Standalone task without project_id: check if submissions exist
+            # If another user has worked on this standalone task, block access to prevent cross-tenant inspection
+            sub_res = supabase.table("submissions").select("user_id").eq("task_id", task_id).limit(1).execute()
+            if sub_res.data and sub_res.data[0]["user_id"] != authenticated_user_id:
+                raise HTTPException(status_code=403, detail="Access denied: You do not own this standalone ticket.")
+
+    # Multi-file support: build file structure
+    lang = (task_data.get("language") or "python").lower()
+    main_file = "solution.js" if lang in ["javascript", "js"] else "solution.py"
+    files = task_data.get("files") or {}
+    if not files:
+        files = {
+            main_file: task_data.get("starter_code", "")
+        }
+
+    target_files = task_data.get("target_files") or [main_file]
+
     # Do not expose test cases to the frontend
     return TaskResponse(
         task_id=task_data["task_id"],
@@ -36,7 +54,9 @@ def get_task(
         difficulty_level=task_data["difficulty_level"],
         persona=task_data["persona"],
         language=task_data["language"],
-        starter_code=task_data["starter_code"]
+        starter_code=task_data["starter_code"],
+        files=files,
+        target_files=target_files
     )
 
 @router.get("", response_model=List[TaskResponse])

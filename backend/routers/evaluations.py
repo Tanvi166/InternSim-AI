@@ -391,11 +391,27 @@ async def submit_code(
         
     task = task_res.data[0]
 
-    # Validate project ownership if task belongs to a project
+    # Validate project ownership if task belongs to a project, or standalone ownership
     if task.get("project_id"):
         proj_res = supabase.table("projects").select("user_id").eq("project_id", task["project_id"]).execute()
         if proj_res.data and proj_res.data[0]["user_id"] != submission.user_id:
             raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
+    else:
+        # Standalone task: ensure caller owns existing submissions on this task
+        sub_res = supabase.table("submissions").select("user_id").eq("task_id", submission.task_id).limit(1).execute()
+        if sub_res.data and sub_res.data[0]["user_id"] != submission.user_id:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own this standalone ticket.")
+
+    # Validate multi-file paths
+    from services.file_service import validate_and_normalize_files
+    try:
+        entry_fname, piston_files = validate_and_normalize_files(
+            submission.submitted_code,
+            submission.language,
+            submission.files
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
 
     test_cases = task["test_cases"]
     
@@ -411,7 +427,12 @@ async def submit_code(
     batch_harness = build_batch_harness_code(submission.language, submission.submitted_code, tc_inputs)
     
     try:
-        piston_batch_res = await execute_code(submission.language, version, batch_harness)
+        piston_batch_res = await execute_code(
+            submission.language, 
+            version, 
+            batch_harness, 
+            files=piston_files
+        )
         run_data = piston_batch_res.get("run", {})
         stdout = run_data.get("stdout", "")
         stderr = run_data.get("stderr", "")
@@ -563,13 +584,20 @@ async def submit_code(
 async def run_code_preview(req: CodeRunRequest):
     """
     Executes submitted code directly in Piston/local sandbox with custom stdin.
+    Supports multi-file projects with safe relative path validation.
     Does NOT create a submission or change user scores.
     """
     lang = req.language.lower()
     version = "3.10.0" if lang == "python" else "18.15.0"
 
+    from services.file_service import validate_and_normalize_files
     try:
-        piston_res = await execute_code(lang, version, req.code, stdin=req.stdin or "")
+        entry_fname, piston_files = validate_and_normalize_files(req.code, lang, req.files)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    try:
+        piston_res = await execute_code(lang, version, req.code, stdin=req.stdin or "", files=piston_files)
         run_data = piston_res.get("run", {})
         stdout = run_data.get("stdout", "")
         stderr = run_data.get("stderr", "")
@@ -597,7 +625,7 @@ async def run_code_preview(req: CodeRunRequest):
 async def run_sample_tests(req: SampleTestsRequest):
     """
     Runs code against only VISIBLE test cases for the specified task.
-    Hidden test cases remain strictly private and are NEVER evaluated or leaked here.
+    Supports multi-file projects while keeping hidden test cases strictly private.
     Does NOT affect user score or persist submissions.
     """
     supabase = get_supabase_client()
@@ -618,6 +646,12 @@ async def run_sample_tests(req: SampleTestsRequest):
     version = "3.10.0" if lang == "python" else "18.15.0"
     total_samples = len(visible_tests)
 
+    from services.file_service import validate_and_normalize_files
+    try:
+        entry_fname, piston_files = validate_and_normalize_files(req.code, lang, req.files)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
     tc_inputs = [tc.get("input", "") for tc in visible_tests]
     batch_harness = build_batch_harness_code(lang, req.code, tc_inputs)
 
@@ -627,7 +661,7 @@ async def run_sample_tests(req: SampleTestsRequest):
     raw_error = None
 
     try:
-        piston_batch_res = await execute_code(lang, version, batch_harness)
+        piston_batch_res = await execute_code(lang, version, batch_harness, files=piston_files)
         run_data = piston_batch_res.get("run", {})
         stdout = run_data.get("stdout", "")
         stderr = run_data.get("stderr", "")

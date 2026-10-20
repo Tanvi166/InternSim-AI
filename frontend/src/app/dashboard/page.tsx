@@ -82,24 +82,62 @@ export default async function DashboardPage() {
     console.warn('Could not fetch active project:', err);
   }
 
-  // Extract task IDs already submitted by this user
-  const submittedTaskIds = Array.from(new Set(safeSubmissions.map((s: any) => s.task_id).filter(Boolean)));
-
-  // Fetch the latest task that the current user has NOT yet submitted, scoped to active project if present
-  let latestTaskQuery = supabase
-    .from('tasks')
-    .select('*')
-    .order('created_at', { ascending: false });
-
+  // Query all tasks belonging to the active project to establish the sequential ticket lifecycle
+  let projectTasks: any[] = [];
   if (activeProject?.project_id) {
-    latestTaskQuery = latestTaskQuery.eq('project_id', activeProject.project_id);
+    const { data: pTasks } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('project_id', activeProject.project_id)
+      .order('created_at', { ascending: true });
+    projectTasks = pTasks || [];
   }
 
-  if (submittedTaskIds.length > 0) {
-    latestTaskQuery = latestTaskQuery.not('task_id', 'in', `(${submittedTaskIds.join(',')})`);
-  }
+  // Set of task IDs that the user has passed (correctness >= 40)
+  const passedTaskIds = new Set(
+    safeSubmissions
+      .filter((s: any) => (s.correctness_score || 0) >= 40)
+      .map((s: any) => s.task_id)
+  );
 
-  const { data: latestTasks } = await latestTaskQuery.limit(1);
+  // Determine active ticket:
+  // 1. Look within project tasks for the first task that is NOT yet passed (could be unsubmitted OR needing revision)
+  let latestTask: any = null;
+  let activeTicketStatus: 'new' | 'revising' | 'passed' = 'new';
+  let latestTaskSubmission: any = null;
+
+  if (projectTasks.length > 0) {
+    const unpassedProjectTask = projectTasks.find((t: any) => !passedTaskIds.has(t.task_id));
+    if (unpassedProjectTask) {
+      latestTask = unpassedProjectTask;
+      // Check if user previously submitted this task (i.e. needing revision)
+      latestTaskSubmission = safeSubmissions.find((s: any) => s.task_id === unpassedProjectTask.task_id);
+      if (latestTaskSubmission) {
+        activeTicketStatus = 'revising';
+      }
+    }
+  } else {
+    // Fallback if no project tasks yet: query latest unpassed task
+    let fallbackQuery = supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (activeProject?.project_id) {
+      fallbackQuery = fallbackQuery.eq('project_id', activeProject.project_id);
+    }
+    if (passedTaskIds.size > 0) {
+      fallbackQuery = fallbackQuery.not('task_id', 'in', `(${Array.from(passedTaskIds).join(',')})`);
+    }
+    const { data: fallbackTasks } = await fallbackQuery.limit(1);
+    if (fallbackTasks && fallbackTasks.length > 0) {
+      latestTask = fallbackTasks[0];
+      latestTaskSubmission = safeSubmissions.find((s: any) => s.task_id === latestTask.task_id);
+      if (latestTaskSubmission) {
+        activeTicketStatus = 'revising';
+      }
+    }
+  }
 
   const personaConfig = getPersonaConfig(profile.chosen_persona);
   const totalSubmissions = submissions?.length || 0;
@@ -119,7 +157,6 @@ export default async function DashboardPage() {
     ? Math.round(safeSubmissions.reduce((acc: number, cur: any) => acc + (cur.quality_score || 0), 0) / totalSubmissions)
     : 0;
 
-  const latestTask = latestTasks && latestTasks.length > 0 ? latestTasks[0] : null;
   const activeTicketId = latestTask ? formatTicketId(latestTask.task_id) : null;
   const isProjectCompleted = activeProject && (activeProject.status === 'completed' || activeProject.completed_tickets_count >= activeProject.target_tickets);
 
@@ -141,7 +178,7 @@ export default async function DashboardPage() {
               Good morning, {user.email?.split('@')[0] || 'Engineer'}
             </h1>
             <p className="text-xs text-zinc-400 font-mono mt-1">
-              Active Sprint: <span className="text-zinc-200 font-semibold">Sprint {sprint} · Day {day}</span> · {latestTask ? 'Ticket In Progress' : isProjectCompleted ? 'Project Completed' : 'Ready for Next Ticket'}
+              Active Sprint: <span className="text-zinc-200 font-semibold">Sprint {sprint} · Day {day}</span> · {latestTask ? (activeTicketStatus === 'revising' ? 'Ticket Revision In Progress' : 'Ticket Assigned') : isProjectCompleted ? 'Project Completed' : 'Ready for Next Ticket'}
             </p>
           </div>
 
@@ -164,12 +201,12 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        {/* Project Overview Card */}
+        {/* Project Overview & Ticket Sequence Lifecycle Track */}
         {activeProject && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-3 font-mono text-xs">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4 font-mono text-xs shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-zinc-800 text-cyan-400 border border-zinc-700 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 text-[10px] font-bold">
                   ACTIVE INTERNSHIP PROJECT
                 </span>
                 <span className="font-sans font-bold text-zinc-100 text-sm">
@@ -177,15 +214,80 @@ export default async function DashboardPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2 text-zinc-400">
-                <span>Milestone:</span>
+                <span>Sprint Milestone:</span>
                 <span className="font-bold text-cyan-400">
                   {activeProject.completed_tickets_count} of {activeProject.target_tickets} Tickets Passed
                 </span>
               </div>
             </div>
+
             <p className="text-zinc-400 font-sans text-xs leading-relaxed">
               {activeProject.description}
             </p>
+
+            {/* Sequence of Sprint Tickets (Slots 1 to 4) */}
+            <div className="pt-2">
+              <span className="text-[10px] text-zinc-500 uppercase tracking-wider block mb-2 font-semibold">
+                Project Ticket Sequence ({activeProject.target_tickets} Tickets Planned)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {Array.from({ length: activeProject.target_tickets }).map((_, slotIdx) => {
+                  const taskForSlot = projectTasks[slotIdx];
+                  const isPassed = taskForSlot && passedTaskIds.has(taskForSlot.task_id);
+                  const isActive = taskForSlot && latestTask && taskForSlot.task_id === latestTask.task_id;
+                  const isLocked = !taskForSlot && slotIdx > (projectTasks.length);
+
+                  return (
+                    <div
+                      key={slotIdx}
+                      className={`p-3 rounded-lg border transition-all ${
+                        isPassed
+                          ? 'bg-zinc-950/70 border-emerald-900/60'
+                          : isActive
+                          ? 'bg-cyan-950/20 border-cyan-500/60 shadow-md shadow-cyan-500/5'
+                          : taskForSlot
+                          ? 'bg-zinc-950/50 border-zinc-800'
+                          : 'bg-zinc-950/20 border-zinc-900 border-dashed text-zinc-600'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[10px] mb-1.5">
+                        <span className="font-bold">
+                          {taskForSlot ? formatTicketId(taskForSlot.task_id) : `Ticket #${slotIdx + 1}`}
+                        </span>
+                        {isPassed ? (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
+                            PASSED
+                          </span>
+                        ) : isActive ? (
+                          <span className="px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-bold">
+                            {activeTicketStatus === 'revising' ? 'REVISING' : 'ACTIVE'}
+                          </span>
+                        ) : taskForSlot ? (
+                          <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                            QUEUED
+                          </span>
+                        ) : (
+                          <span className="text-zinc-600">UPCOMING</span>
+                        )}
+                      </div>
+
+                      <div className="text-xs font-sans font-medium text-zinc-200 line-clamp-1">
+                        {taskForSlot ? taskForSlot.title : `Milestone Task ${slotIdx + 1}`}
+                      </div>
+
+                      {taskForSlot && (
+                        <div className="mt-2 pt-2 border-t border-zinc-800/60 flex items-center justify-between text-[10px]">
+                          <span className="text-zinc-500 uppercase">{taskForSlot.task_type}</span>
+                          <Link href={`/tasks/${taskForSlot.task_id}`} className="text-cyan-400 hover:underline">
+                            {isPassed ? 'Review Code' : 'Open Ticket'} →
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
@@ -199,7 +301,10 @@ export default async function DashboardPage() {
                 <span className="px-2.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80 font-bold">
                   {activeTicketId}
                 </span>
-                <StatusBadge status="in-progress" label="Current Assigned Ticket" />
+                <StatusBadge 
+                  status={activeTicketStatus === 'revising' ? 'warning' : 'in-progress'} 
+                  label={activeTicketStatus === 'revising' ? 'Revision Needed (Requires Update)' : 'Current Assigned Ticket'} 
+                />
                 <span className="text-zinc-500">· Priority: P1 HIGH</span>
               </div>
 
@@ -215,6 +320,15 @@ export default async function DashboardPage() {
               <p className="text-xs md:text-sm text-zinc-300 leading-relaxed max-w-4xl line-clamp-3">
                 {latestTask.description}
               </p>
+
+              {activeTicketStatus === 'revising' && latestTaskSubmission && (
+                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 text-amber-200/90 text-xs font-mono flex items-start gap-2 mt-3">
+                  <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Prior Submission Scored {latestTaskSubmission.total_score}/100:</span> Correctness {latestTaskSubmission.correctness_score}/60, Quality {latestTaskSubmission.quality_score}/40. Reopen the workspace to debug, test, and resubmit without losing submission history.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 pt-4 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -231,7 +345,7 @@ export default async function DashboardPage() {
 
               <Link href={`/tasks/${latestTask.task_id}`}>
                 <button className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-xs transition-colors shadow-lg shadow-cyan-500/20">
-                  <span>Open Ticket Workspace</span>
+                  <span>{activeTicketStatus === 'revising' ? 'Revise Ticket Workspace' : 'Open Ticket Workspace'}</span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </Link>

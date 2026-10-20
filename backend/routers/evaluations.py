@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from models import (
     CodeSubmission,
     SubmissionResult,
@@ -12,7 +12,8 @@ from models import (
 from database import get_supabase_client
 from services.piston_service import execute_code
 from services.llm_service import generate_ai_response
-from typing import Any, List
+from services.auth_service import get_authenticated_user_id
+from typing import Any, List, Optional
 import json
 
 router = APIRouter()
@@ -373,7 +374,14 @@ __SUBMITTED_CODE__
     return submitted_code
 
 @router.post("/submit", response_model=SubmissionResult)
-async def submit_code(submission: CodeSubmission):
+async def submit_code(
+    submission: CodeSubmission,
+    authenticated_user_id: Optional[str] = Depends(get_authenticated_user_id)
+):
+    # If Authorization header is provided, ensure user_id matches token
+    if authenticated_user_id and authenticated_user_id != submission.user_id:
+        raise HTTPException(status_code=403, detail="Forbidden: User ID does not match authenticated credentials.")
+
     supabase = get_supabase_client()
     
     # 1. Fetch Task
@@ -382,6 +390,13 @@ async def submit_code(submission: CodeSubmission):
         raise HTTPException(status_code=404, detail="Task not found")
         
     task = task_res.data[0]
+
+    # Validate project ownership if task belongs to a project
+    if task.get("project_id"):
+        proj_res = supabase.table("projects").select("user_id").eq("project_id", task["project_id"]).execute()
+        if proj_res.data and proj_res.data[0]["user_id"] != submission.user_id:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
+
     test_cases = task["test_cases"]
     
     # 2. Correctness Evaluation (Piston)
@@ -496,7 +511,39 @@ async def submit_code(submission: CodeSubmission):
         
     saved_sub = sub_res.data[0]
     
-    # 5. Adaptive Difficulty logic (Check last N tasks)
+    # 5. Project completion check
+    # If the task belongs to a project and passed (correctness >= 40), check if project target tickets are satisfied
+    if task.get("project_id") and correctness_score >= 40:
+        try:
+            proj_res = supabase.table("projects").select("*").eq("project_id", task["project_id"]).execute()
+            if proj_res.data and proj_res.data[0]["status"] == "active":
+                proj = proj_res.data[0]
+                target_tickets = proj.get("target_tickets", 4)
+                
+                # Fetch distinct passed tasks for this project
+                proj_tasks_res = supabase.table("tasks").select("task_id").eq("project_id", proj["project_id"]).execute()
+                p_task_ids = [t["task_id"] for t in proj_tasks_res.data] if proj_tasks_res.data else []
+                
+                if p_task_ids:
+                    passed_subs_res = (
+                        supabase.table("submissions")
+                        .select("task_id")
+                        .eq("user_id", submission.user_id)
+                        .in_("task_id", p_task_ids)
+                        .gte("correctness_score", 40)
+                        .execute()
+                    )
+                    passed_unique = set(s["task_id"] for s in (passed_subs_res.data or []))
+                    if len(passed_unique) >= target_tickets:
+                        from datetime import datetime, timezone
+                        supabase.table("projects").update({
+                            "status": "completed",
+                            "completed_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("project_id", proj["project_id"]).execute()
+        except Exception as pe:
+            print(f"[PROJECT COMPLETION CHECK ERROR]: {pe}")
+
+    # 6. Adaptive Difficulty logic (Check last N tasks)
     # E.g. get average of last 3
     history_res = supabase.table("submissions").select("total_score").eq("user_id", submission.user_id).order("created_at", desc=True).limit(3).execute()
     if history_res.data and len(history_res.data) == 3:

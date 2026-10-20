@@ -18,11 +18,17 @@ export default async function TaskPage(props: { params?: Promise<{ taskId: strin
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
   const personaConfig = getPersonaConfig(profile?.chosen_persona);
 
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-  const res = await fetch(`${apiUrl}/api/tasks/${taskId}`, { cache: 'no-store' });
+  const res = await fetch(`${apiUrl}/api/tasks/${taskId}`, { headers, cache: 'no-store' });
   
   if (!res.ok) {
     if (res.status === 404) return notFound();
+    if (res.status === 403) redirect('/dashboard');
     throw new Error('Failed to load task');
   }
 

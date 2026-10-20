@@ -468,5 +468,84 @@ class TestProjectBasedTicketManagement(unittest.TestCase):
             self.assertEqual(data["completed_tickets_count"], 4)
             self.assertIsNotNone(data["completed_at"])
 
+    def test_get_task_rejects_unowned_project_ticket(self):
+        """When an authenticated user requests a ticket belonging to another user's project, return 403 Forbidden."""
+        with patch("services.auth_service.get_supabase_client") as mock_auth_sb, \
+             patch("routers.tasks.get_supabase_client") as mock_tasks_sb:
+            
+            mock_auth = MagicMock()
+            mock_auth_sb.return_value = mock_auth
+            mock_auth.auth.get_user.return_value.user.id = "user-bob-999"
+
+            mock_db = MagicMock()
+            mock_tasks_sb.return_value = mock_db
+
+            def table_mock(name):
+                t = MagicMock()
+                if name == "tasks":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "task_id": "task-private-1",
+                        "project_id": "proj-alice-owned",
+                        "title": "Private Core",
+                        "description": "Private ticket",
+                        "task_type": "feature-dev",
+                        "difficulty_level": 1,
+                        "persona": "Enterprise SaaS",
+                        "language": "python",
+                        "starter_code": "pass",
+                        "test_cases": []
+                    }]
+                elif name == "projects":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "user_id": "user-alice-123" # Owned by Alice, Bob is requesting
+                    }]
+                return t
+
+            mock_db.table.side_effect = table_mock
+
+            headers = {"Authorization": "Bearer bob-jwt-token"}
+            res = client.get("/api/tasks/task-private-1", headers=headers)
+            self.assertEqual(res.status_code, 403)
+            self.assertIn("Access denied", res.json()["detail"])
+
+    def test_submit_code_rejects_unowned_project_ticket(self):
+        """When a user attempts to submit code for a project owned by someone else, return 403 Forbidden."""
+        with patch("services.auth_service.get_supabase_client") as mock_auth_sb, \
+             patch("routers.evaluations.get_supabase_client") as mock_eval_sb:
+
+            mock_auth = MagicMock()
+            mock_auth_sb.return_value = mock_auth
+            mock_auth.auth.get_user.return_value.user.id = "user-bob-999"
+
+            mock_db = MagicMock()
+            mock_eval_sb.return_value = mock_db
+
+            def table_mock(name):
+                t = MagicMock()
+                if name == "tasks":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "task_id": "task-private-1",
+                        "project_id": "proj-alice-owned",
+                        "test_cases": []
+                    }]
+                elif name == "projects":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "user_id": "user-alice-123"
+                    }]
+                return t
+
+            mock_db.table.side_effect = table_mock
+
+            headers = {"Authorization": "Bearer bob-jwt-token"}
+            res = client.post("/api/evaluations/submit", json={
+                "task_id": "task-private-1",
+                "user_id": "user-bob-999",
+                "submitted_code": "def solve(): pass",
+                "language": "python"
+            }, headers=headers)
+
+            self.assertEqual(res.status_code, 403)
+            self.assertIn("Access denied", res.json()["detail"])
+
 if __name__ == "__main__":
     unittest.main()

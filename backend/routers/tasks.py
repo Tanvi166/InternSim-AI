@@ -8,7 +8,10 @@ from services.auth_service import get_authenticated_user_id
 router = APIRouter()
 
 @router.get("/{task_id}", response_model=TaskResponse)
-def get_task(task_id: str):
+def get_task(
+    task_id: str,
+    authenticated_user_id: Optional[str] = Depends(get_authenticated_user_id)
+):
     supabase = get_supabase_client()
     response = supabase.table("tasks").select("*").eq("task_id", task_id).execute()
     
@@ -16,10 +19,17 @@ def get_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
         
     task_data = response.data[0]
+
+    # If the task belongs to a project, prevent users who do not own the project from accessing it
+    if task_data.get("project_id") and authenticated_user_id:
+        proj_res = supabase.table("projects").select("user_id").eq("project_id", task_data["project_id"]).execute()
+        if proj_res.data and proj_res.data[0]["user_id"] != authenticated_user_id:
+            raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
     
     # Do not expose test cases to the frontend
     return TaskResponse(
         task_id=task_data["task_id"],
+        project_id=task_data.get("project_id"),
         title=task_data["title"],
         description=task_data["description"],
         task_type=task_data["task_type"],

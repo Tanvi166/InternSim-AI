@@ -39,6 +39,49 @@ def get_task(
         starter_code=task_data["starter_code"]
     )
 
+@router.get("", response_model=List[TaskResponse])
+def list_tasks_for_project(
+    project_id: str,
+    authenticated_user_id: Optional[str] = Depends(get_authenticated_user_id)
+):
+    """
+    Lists engineering assignment tickets belonging to a project.
+    Strictly verifies user ownership of the project before returning tasks.
+    """
+    if not authenticated_user_id:
+        raise HTTPException(status_code=401, detail="Authentication required to view project assignments.")
+
+    supabase = get_supabase_client()
+    proj_res = supabase.table("projects").select("user_id").eq("project_id", project_id).execute()
+    if not proj_res.data:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    if proj_res.data[0]["user_id"] != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Access denied: You do not own this project.")
+
+    tasks_res = (
+        supabase.table("tasks")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    return [
+        TaskResponse(
+            task_id=t["task_id"],
+            project_id=t.get("project_id"),
+            title=t["title"],
+            description=t["description"],
+            task_type=t["task_type"],
+            difficulty_level=t["difficulty_level"],
+            persona=t["persona"],
+            language=t["language"],
+            starter_code=t["starter_code"]
+        )
+        for t in (tasks_res.data or [])
+    ]
+
 @router.post("/generate", response_model=TaskResponse)
 def generate_new_task(
     request: TaskGenerateRequest,

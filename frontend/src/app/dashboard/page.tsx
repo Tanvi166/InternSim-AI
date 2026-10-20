@@ -1,31 +1,28 @@
 import { createClient } from '@/utils/supabase/server';
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 import { AppShell } from '@/components/AppShell';
-import GenerateTaskButton from './GenerateTaskButton';
-import StartNewProjectButton from './StartNewProjectButton';
 import { StatusBadge } from '@/components/StatusBadge';
 import { getPersonaConfig, formatTicketId, getSprintMetrics } from '@/lib/companyConfig';
+import GenerateTaskButton from './GenerateTaskButton';
+import StartNewProjectButton from './StartNewProjectButton';
+import AssignmentInbox, { AssignmentItem } from './AssignmentInbox';
+import Link from 'next/link';
 import { 
   Building2, 
-  CheckCircle2, 
-  Clock, 
   Terminal, 
-  TrendingUp, 
-  AlertCircle, 
+  CheckCircle2, 
   ArrowRight, 
-  Code2, 
+  Flame, 
   ShieldCheck, 
-  Layers, 
-  Sparkles,
   Award,
-  Flame
+  AlertCircle,
+  Inbox
 } from 'lucide-react';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     redirect('/login');
   }
@@ -100,8 +97,19 @@ export default async function DashboardPage() {
       .map((s: any) => s.task_id)
   );
 
+  // Group latest submission by task_id for fast status lookup
+  const latestSubmissionsByTaskId = new Map<string, any>();
+  const attemptCountsByTaskId = new Map<string, number>();
+  for (const s of safeSubmissions) {
+    if (s.task_id) {
+      if (!latestSubmissionsByTaskId.has(s.task_id)) {
+        latestSubmissionsByTaskId.set(s.task_id, s);
+      }
+      attemptCountsByTaskId.set(s.task_id, (attemptCountsByTaskId.get(s.task_id) || 0) + 1);
+    }
+  }
+
   // Determine active ticket:
-  // 1. Look within project tasks for the first task that is NOT yet passed (could be unsubmitted OR needing revision)
   let latestTask: any = null;
   let activeTicketStatus: 'new' | 'revising' | 'passed' = 'new';
   let latestTaskSubmission: any = null;
@@ -110,8 +118,7 @@ export default async function DashboardPage() {
     const unpassedProjectTask = projectTasks.find((t: any) => !passedTaskIds.has(t.task_id));
     if (unpassedProjectTask) {
       latestTask = unpassedProjectTask;
-      // Check if user previously submitted this task (i.e. needing revision)
-      latestTaskSubmission = safeSubmissions.find((s: any) => s.task_id === unpassedProjectTask.task_id);
+      latestTaskSubmission = latestSubmissionsByTaskId.get(unpassedProjectTask.task_id);
       if (latestTaskSubmission) {
         activeTicketStatus = 'revising';
       }
@@ -132,12 +139,82 @@ export default async function DashboardPage() {
     const { data: fallbackTasks } = await fallbackQuery.limit(1);
     if (fallbackTasks && fallbackTasks.length > 0) {
       latestTask = fallbackTasks[0];
-      latestTaskSubmission = safeSubmissions.find((s: any) => s.task_id === latestTask.task_id);
+      latestTaskSubmission = latestSubmissionsByTaskId.get(latestTask.task_id);
       if (latestTaskSubmission) {
         activeTicketStatus = 'revising';
       }
     }
   }
+
+  // Build Assignment Items for the Assignment Inbox
+  const allKnownTasksMap = new Map<string, any>();
+  // 1. Project tasks
+  for (const pt of projectTasks) {
+    allKnownTasksMap.set(pt.task_id, pt);
+  }
+  // 2. Tasks from submissions that might be standalone or older
+  for (const s of safeSubmissions) {
+    const subTask: any = Array.isArray(s.tasks) ? s.tasks[0] : s.tasks;
+    if (subTask?.task_id && !allKnownTasksMap.has(subTask.task_id)) {
+      allKnownTasksMap.set(subTask.task_id, subTask);
+    }
+  }
+
+  const assignmentItems: AssignmentItem[] = Array.from(allKnownTasksMap.values()).map((task, idx) => {
+    const isPassed = passedTaskIds.has(task.task_id);
+    const lastSub = latestSubmissionsByTaskId.get(task.task_id);
+    const attempts = attemptCountsByTaskId.get(task.task_id) || 0;
+    const isActive = latestTask && latestTask.task_id === task.task_id;
+
+    let itemStatus: AssignmentItem['status'] = 'inbox';
+    if (isPassed) {
+      itemStatus = 'completed';
+    } else if (lastSub) {
+      itemStatus = 'review_requested'; // Needs revision
+    } else if (isActive) {
+      itemStatus = 'in_progress';
+    } else {
+      itemStatus = 'inbox';
+    }
+
+    // Realistic assignment priority: P0 Critical for bug fixes, P1 High for active/revising, P2 Medium for queued
+    const isBug = (task.task_type || '').toLowerCase().includes('bug');
+    let priority: AssignmentItem['priority'] = 'P2 MEDIUM';
+    if (isBug && (isActive || itemStatus === 'review_requested')) {
+      priority = 'P0 CRITICAL';
+    } else if (isActive || itemStatus === 'review_requested' || isBug) {
+      priority = 'P1 HIGH';
+    }
+
+    // Category mapping
+    let category: AssignmentItem['category'] = 'feature-dev';
+    const typeStr = (task.task_type || '').toLowerCase();
+    if (typeStr.includes('bug')) category = 'bug-fix';
+    else if (typeStr.includes('refactor')) category = 'refactor';
+    else if (typeStr.includes('doc')) category = 'documentation';
+
+    // Due date label (sprint milestone offset)
+    const dueDateLabel = `Sprint Day ${idx + 2} (EOD)`;
+
+    return {
+      taskId: task.task_id,
+      formattedId: formatTicketId(task.task_id),
+      title: task.title || 'Sprint Ticket',
+      description: task.description || '',
+      category,
+      priority,
+      status: itemStatus,
+      language: task.language || 'python',
+      difficultyLevel: task.difficulty_level || 1,
+      projectTitle: activeProject?.title,
+      dueDateLabel,
+      lastScore: lastSub ? lastSub.total_score : null,
+      lastCorrectness: lastSub ? lastSub.correctness_score : null,
+      lastQuality: lastSub ? lastSub.quality_score : null,
+      isPassed,
+      attemptCount: attempts
+    };
+  });
 
   const personaConfig = getPersonaConfig(profile.chosen_persona);
   const totalSubmissions = submissions?.length || 0;
@@ -235,7 +312,6 @@ export default async function DashboardPage() {
                   const taskForSlot = projectTasks[slotIdx];
                   const isPassed = taskForSlot && passedTaskIds.has(taskForSlot.task_id);
                   const isActive = taskForSlot && latestTask && taskForSlot.task_id === latestTask.task_id;
-                  const isLocked = !taskForSlot && slotIdx > (projectTasks.length);
 
                   return (
                     <div
@@ -290,6 +366,12 @@ export default async function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Engineering Assignment Inbox Section */}
+        <AssignmentInbox 
+          assignments={assignmentItems} 
+          activeTaskId={latestTask?.task_id} 
+        />
 
         {/* Current Active Ticket Dominant Card or Empty State */}
         {latestTask ? (
@@ -492,11 +574,12 @@ export default async function DashboardPage() {
                   {safeSubmissions.map((sub: any) => {
                     const ticketId = formatTicketId(sub.task_id);
                     const isPassed = (sub.correctness_score || 0) >= 40;
+                    const subTask: any = Array.isArray(sub.tasks) ? sub.tasks[0] : sub.tasks;
                     return (
                       <tr key={sub.submission_id} className="hover:bg-zinc-800/40 transition-colors">
                         <td className="p-4 font-bold text-cyan-400">
-                          {sub.tasks?.task_id ? (
-                            <Link href={`/tasks/${sub.tasks.task_id}`} className="hover:underline">
+                          {subTask?.task_id ? (
+                            <Link href={`/tasks/${subTask.task_id}`} className="hover:underline">
                               {ticketId}
                             </Link>
                           ) : (
@@ -504,11 +587,11 @@ export default async function DashboardPage() {
                           )}
                         </td>
                         <td className="p-4 text-zinc-200 font-sans font-medium">
-                          {sub.tasks?.title || 'System Ticket'}
+                          {subTask?.title || 'System Ticket'}
                         </td>
                         <td className="p-4 text-zinc-400">
                           <span className="px-2 py-0.5 rounded bg-zinc-800 text-[10px]">
-                            {sub.tasks?.task_type || 'bug-fix'}
+                            {subTask?.task_type || 'bug-fix'}
                           </span>
                         </td>
                         <td className="p-4 text-zinc-400">

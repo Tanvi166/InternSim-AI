@@ -547,5 +547,77 @@ class TestProjectBasedTicketManagement(unittest.TestCase):
             self.assertEqual(res.status_code, 403)
             self.assertIn("Access denied", res.json()["detail"])
 
+    def test_list_tasks_for_project_enforces_ownership(self):
+        """When an authenticated user attempts to list assignments for an unowned project, return 403 Forbidden."""
+        with patch("services.auth_service.get_supabase_client") as mock_auth_sb, \
+             patch("routers.tasks.get_supabase_client") as mock_tasks_sb:
+
+            mock_auth = MagicMock()
+            mock_auth_sb.return_value = mock_auth
+            mock_auth.auth.get_user.return_value.user.id = "user-bob-999"
+
+            mock_db = MagicMock()
+            mock_tasks_sb.return_value = mock_db
+
+            def table_mock(name):
+                t = MagicMock()
+                if name == "projects":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "user_id": "user-alice-123"
+                    }]
+                return t
+
+            mock_db.table.side_effect = table_mock
+
+            headers = {"Authorization": "Bearer bob-jwt-token"}
+            res = client.get("/api/tasks?project_id=proj-alice-owned", headers=headers)
+            self.assertEqual(res.status_code, 403)
+            self.assertIn("Access denied", res.json()["detail"])
+
+    def test_list_tasks_for_project_returns_assignments_for_owner(self):
+        """When owner requests assignments for their project, returns list of tasks."""
+        with patch("services.auth_service.get_supabase_client") as mock_auth_sb, \
+             patch("routers.tasks.get_supabase_client") as mock_tasks_sb:
+
+            mock_auth = MagicMock()
+            mock_auth_sb.return_value = mock_auth
+            mock_auth.auth.get_user.return_value.user.id = "user-alice-123"
+
+            mock_db = MagicMock()
+            mock_tasks_sb.return_value = mock_db
+
+            def table_mock(name):
+                t = MagicMock()
+                if name == "projects":
+                    t.select.return_value.eq.return_value.execute.return_value.data = [{
+                        "user_id": "user-alice-123"
+                    }]
+                elif name == "tasks":
+                    t.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
+                        {
+                            "task_id": "task-1",
+                            "project_id": "proj-1",
+                            "title": "Bug Fix A",
+                            "description": "Fix memory leak",
+                            "task_type": "bug-fix",
+                            "difficulty_level": 1,
+                            "persona": "Enterprise SaaS",
+                            "language": "python",
+                            "starter_code": "pass",
+                            "test_cases": []
+                        }
+                    ]
+                return t
+
+            mock_db.table.side_effect = table_mock
+
+            headers = {"Authorization": "Bearer alice-jwt-token"}
+            res = client.get("/api/tasks?project_id=proj-1", headers=headers)
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(len(data), 1)
+            self.assertEqual(data[0]["title"], "Bug Fix A")
+            self.assertEqual(data[0]["task_type"], "bug-fix")
+
 if __name__ == "__main__":
     unittest.main()

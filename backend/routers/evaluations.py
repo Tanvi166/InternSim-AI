@@ -543,17 +543,13 @@ async def submit_code(
         except Exception as pe:
             print(f"[PROJECT COMPLETION CHECK ERROR]: {pe}")
 
-    # 6. Adaptive Difficulty logic (Check last N tasks)
-    # E.g. get average of last 3
-    history_res = supabase.table("submissions").select("total_score").eq("user_id", submission.user_id).order("created_at", desc=True).limit(3).execute()
-    if history_res.data and len(history_res.data) == 3:
-        avg_score = sum(h["total_score"] for h in history_res.data) / 3
-        if avg_score >= 75:
-            # Upgrade difficulty tier
-            profile_res = supabase.table("profiles").select("current_difficulty_tier").eq("id", submission.user_id).single().execute()
-            if profile_res.data:
-                current_tier = profile_res.data["current_difficulty_tier"]
-                supabase.table("profiles").update({"current_difficulty_tier": current_tier + 1}).eq("id", submission.user_id).execute()
+    # 6. Adaptive Difficulty Engine
+    try:
+        from services.difficulty_service import evaluate_and_update_user_difficulty
+        diff_report = evaluate_and_update_user_difficulty(supabase, submission.user_id)
+        print(f"[ADAPTIVE DIFFICULTY UPDATE]: {diff_report['rationale']}")
+    except Exception as de:
+        print(f"[ADAPTIVE DIFFICULTY ERROR]: {de}")
     
     return SubmissionResult(
         submission_id=saved_sub["submission_id"],

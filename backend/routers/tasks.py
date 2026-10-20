@@ -65,6 +65,18 @@ def generate_new_task(
         project_title = proj_data.get("title", "")
         project_desc = proj_data.get("description", "")
 
+    # Synchronize difficulty_level with authenticated user's profile if available
+    effective_difficulty = request.difficulty_level
+    if authenticated_user_id:
+        try:
+            profile_res = supabase.table("profiles").select("current_difficulty_tier").eq("id", authenticated_user_id).single().execute()
+            if isinstance(profile_res.data, dict) and profile_res.data.get("current_difficulty_tier") is not None:
+                tier_val = profile_res.data["current_difficulty_tier"]
+                if isinstance(tier_val, int):
+                    effective_difficulty = tier_val
+        except Exception as pe:
+            print(f"[PROFILE DIFFICULTY LOOKUP WARNING]: {pe}")
+
     # Check for previous successful submission strictly within the same project
     if authenticated_user_id and request.include_continuity and request.project_id:
         try:
@@ -120,7 +132,7 @@ def generate_new_task(
 
     prompt = f"""
     Generate a {request.task_type} programming task in {request.language}.
-    Target skill level: {request.skill_level} (Difficulty tier: {request.difficulty_level}).
+    Target skill level: {request.skill_level} (Difficulty tier: {effective_difficulty}).
     Company Persona: {request.persona}.
     {f'Project Focus: {project_title} - {project_desc}' if project_title else ''}
     {prior_context_prompt}
@@ -144,7 +156,7 @@ def generate_new_task(
         
     # Ensure generated data aligns with the request
     generated_task.task_type = request.task_type
-    generated_task.difficulty_level = request.difficulty_level
+    generated_task.difficulty_level = effective_difficulty
     generated_task.persona = request.persona
     generated_task.language = request.language
     generated_task.project_id = request.project_id

@@ -38,7 +38,8 @@ import {
   FolderTree,
   FileText,
   File,
-  Code
+  Code,
+  RefreshCw
 } from 'lucide-react';
 
 interface InitialSubmissionData {
@@ -55,35 +56,41 @@ interface TaskEditorProps {
   task: any;
   userId?: string;
   initialSubmission?: InitialSubmissionData | null;
+  repositoryWorkspace?: { repositoryId: number; fullName: string; mainFileName: string };
 }
 
-export default function TaskEditor({ task, userId, initialSubmission }: TaskEditorProps) {
+export default function TaskEditor({ task, userId, initialSubmission, repositoryWorkspace }: TaskEditorProps) {
   const router = useRouter();
+  const isRepositoryWorkspace = Boolean(repositoryWorkspace);
 
   // Multi-file initialization: Determine available files
-  const mainFileName = task.language === 'javascript' ? 'solution.js' : 'solution.py';
-  const initialFiles: Record<string, string> = {
-    ...(task.files || {}),
-    [mainFileName]: initialSubmission?.submitted_code ?? (task.starter_code || '')
-  };
+  const mainFileName = repositoryWorkspace?.mainFileName || (task.language === 'javascript' ? 'solution.js' : 'solution.py');
+  const initialFiles: Record<string, string> = isRepositoryWorkspace
+    ? { ...(task.files || {}) }
+    : {
+        ...(task.files || {}),
+        [mainFileName]: initialSubmission?.submitted_code ?? (task.starter_code || '')
+      };
 
   const [files, setFiles] = useState<Record<string, string>>(initialFiles);
   const [activeFileName, setActiveFileName] = useState<string>(mainFileName);
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
-  const [draftStatus, setDraftStatus] = useState<'idle' | 'restored' | 'saved'>('idle');
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'pending' | 'restored' | 'saved'>('idle');
   const [loading, setLoading] = useState(false);
   const [pipelineStep, setPipelineStep] = useState<number>(0);
   const [result, setResult] = useState<any>(initialSubmission || null);
 
   // Storage key for multi-file draft: scoped by user, task
-  const multiDraftKey = userId && task?.task_id ? `internsim_multifile_draft_${userId}_${task.task_id}` : null;
+  const multiDraftKey = isRepositoryWorkspace && userId && repositoryWorkspace
+    ? `internsim_repository_draft_${userId}_${repositoryWorkspace.repositoryId}`
+    : userId && task?.task_id ? `internsim_multifile_draft_${userId}_${task.task_id}` : null;
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isRunningCode, setIsRunningCode] = useState(false);
   const [isRunningTests, setIsRunningTests] = useState(false);
   const [customStdin, setCustomStdin] = useState('');
   const [showStdinInput, setShowStdinInput] = useState(false);
-  const [activeConsoleTab, setActiveConsoleTab] = useState<'terminal' | 'sampleTests'>('sampleTests');
+  const [activeConsoleTab, setActiveConsoleTab] = useState<'terminal' | 'sampleTests'>(isRepositoryWorkspace ? 'terminal' : 'sampleTests');
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [terminalResult, setTerminalResult] = useState<{
     stdout?: string;
@@ -92,6 +99,63 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
     timed_out?: boolean;
     error?: string;
   } | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<string>('');
+  const [runtimeLogs, setRuntimeLogs] = useState<string>('');
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+
+  const projectRuntimeAction = async (action: 'start' | 'status' | 'stop' | 'logs' | 'preview') => {
+    if (!repositoryWorkspace) return;
+    const previewWindow = action === 'preview' ? window.open('about:blank', '_blank') : null;
+    setRuntimeBusy(true);
+    setConsoleOpen(true);
+    setActiveConsoleTab('terminal');
+    try {
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session?.access_token) throw new Error('Authentication required. Please sign in again.');
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/github/student-project/runtime/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        credentials: action === 'preview' ? 'include' : 'same-origin',
+        body: JSON.stringify(action === 'start'
+          ? { workspace_id: String(repositoryWorkspace.repositoryId), files, working_directory: '' }
+          : { workspace_id: String(repositoryWorkspace.repositoryId) }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'Project runtime request failed.');
+      if (action === 'preview') {
+        if (!previewWindow) throw new Error('Allow pop-ups to open the project preview.');
+        previewWindow.location.href = payload.preview_url;
+      } else if (action === 'logs') setRuntimeLogs([payload.installation_logs, payload.runtime_logs].filter(Boolean).join('\n\n'));
+      else setRuntimeStatus(payload.status || action);
+      if (action === 'start') toast.success('Project runtime started', { description: `Status: ${payload.status}` });
+      if (action === 'start' && ['queued', 'preparing', 'installing'].includes(payload.status)) {
+        void (async () => {
+          for (let attempt = 0; attempt < 900; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            try {
+              const poll = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/github/student-project/runtime/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({ workspace_id: String(repositoryWorkspace.repositoryId) }),
+              });
+              const statusData = await poll.json().catch(() => ({}));
+              if (!poll.ok) break;
+              setRuntimeStatus(statusData.status || 'failed');
+              if (!['queued', 'preparing', 'installing'].includes(statusData.status)) break;
+            } catch { break; }
+          }
+        })();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Project runtime failed.';
+      previewWindow?.close();
+      setRuntimeStatus('failed');
+      setRuntimeLogs(message);
+      toast.error('Project runtime failed', { description: message });
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
   const [sampleTestResults, setSampleTestResults] = useState<{
     total_samples: number;
     passed_samples: number;
@@ -130,8 +194,21 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
       const saved = window.localStorage.getItem(multiDraftKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed === 'object' && parsed !== null) {
-          setFiles((prev) => ({ ...prev, ...parsed }));
+        const draftFiles = isRepositoryWorkspace
+          ? parsed?.version === 1 && typeof parsed.files === 'object' && parsed.files !== null ? parsed.files : null
+          : parsed;
+        if (typeof draftFiles === 'object' && draftFiles !== null) {
+          const safeDraftFiles = isRepositoryWorkspace
+            ? Object.fromEntries(Object.entries(draftFiles).filter(([name, content]) =>
+                Object.prototype.hasOwnProperty.call(initialFiles, name) && typeof content === 'string'
+              )) as Record<string, string>
+            : draftFiles;
+          setFiles((prev) => ({ ...prev, ...safeDraftFiles }));
+          if (isRepositoryWorkspace) {
+            setDirtyFiles(new Set(Object.entries(safeDraftFiles)
+              .filter(([name, content]) => initialFiles[name] !== content)
+              .map(([name]) => name)));
+          }
           setDraftStatus('restored');
           return;
         }
@@ -149,6 +226,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
     }));
 
     setDirtyFiles((prev) => new Set(prev).add(activeFileName));
+    setDraftStatus('pending');
 
     if (!multiDraftKey) return;
 
@@ -162,7 +240,10 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
           ...files,
           [activeFileName]: newContent
         };
-        window.localStorage.setItem(multiDraftKey, JSON.stringify(currentPayload));
+        const persistedPayload = isRepositoryWorkspace
+          ? { version: 1, files: currentPayload }
+          : currentPayload;
+        window.localStorage.setItem(multiDraftKey, JSON.stringify(persistedPayload));
         setDraftStatus('saved');
       } catch (e) {
         console.warn('Could not save draft to localStorage:', e);
@@ -181,9 +262,19 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
       const mainContent = files[mainFileName] ?? currentCode;
 
-      const res = await fetch(`${apiUrl}/api/evaluations/run`, {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (isRepositoryWorkspace) {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error('Authentication required. Please sign in again.');
+        headers.Authorization = `Bearer ${session.access_token}`;
+      }
+      const runEndpoint = isRepositoryWorkspace
+        ? `${apiUrl}/api/github/student-project/run`
+        : `${apiUrl}/api/evaluations/run`;
+      const res = await fetch(runEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           language: task.language || 'python',
           code: mainContent,
@@ -216,6 +307,40 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
       toast.error('Run Code Failed', { description: errMsg });
     } finally {
       setIsRunningCode(false);
+    }
+  };
+
+  const resetActiveRepositoryFile = async () => {
+    if (!isRepositoryWorkspace || !repositoryWorkspace || !multiDraftKey) return;
+    if (!window.confirm(`Discard the local draft for ${activeFileName} and reload it from ${repositoryWorkspace.fullName}? GitHub will not be changed.`)) return;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Authentication required. Please sign in again.');
+      const query = new URLSearchParams({ path: activeFileName });
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const response = await fetch(`${apiUrl}/api/github/student-project/file?${query}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'Could not reload the remote file.');
+      if (payload.repository_id !== repositoryWorkspace.repositoryId || payload.repository !== repositoryWorkspace.fullName) {
+        throw new Error('The mapped repository changed. Reload the workspace before resetting this file.');
+      }
+      const nextFiles = { ...files, [activeFileName]: payload.content as string };
+      setFiles(nextFiles);
+      setDirtyFiles((previous) => {
+        const next = new Set(previous);
+        next.delete(activeFileName);
+        return next;
+      });
+      setDraftStatus('pending');
+      window.localStorage.setItem(multiDraftKey, JSON.stringify({ version: 1, files: nextFiles }));
+      setDraftStatus('saved');
+      toast.success('Local draft reset', { description: `${activeFileName} was restored from the mapped repository.` });
+    } catch (resetError) {
+      toast.error('Could not reset local draft', { description: resetError instanceof Error ? resetError.message : 'Please try again.' });
     }
   };
 
@@ -363,7 +488,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* LEFT PANEL: Ticket Specification & Context (4 cols) */}
-      <div className="lg:col-span-4 space-y-4">
+      <div className={`${isRepositoryWorkspace ? 'hidden' : 'lg:col-span-4'} space-y-4`}>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-xl space-y-4">
           <div className="flex items-center justify-between font-mono text-xs pb-3 border-b border-zinc-800">
             <div className="flex items-center gap-2">
@@ -426,7 +551,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
       </div>
 
       {/* CENTER PANEL: Multi-File Code Editor (5 cols) */}
-      <div className="lg:col-span-5 space-y-4">
+      <div className={`${isRepositoryWorkspace ? 'lg:col-span-12' : 'lg:col-span-5'} space-y-4`}>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/90 shadow-2xl overflow-hidden flex flex-col">
           {/* File Explorer & Tab Bar */}
           <div className="bg-zinc-950 border-b border-zinc-800">
@@ -434,7 +559,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
             <div className="px-4 py-2 flex items-center justify-between border-b border-zinc-800/60 text-xs font-mono text-zinc-400">
               <div className="flex items-center gap-2">
                 <FolderTree className="h-3.5 w-3.5 text-cyan-400" />
-                <span className="text-zinc-200 font-semibold">Workspace Files ({fileList.length})</span>
+                <span className="text-zinc-200 font-semibold">{isRepositoryWorkspace ? 'Student Repository Files' : 'Workspace Files'} ({fileList.length})</span>
               </div>
               <div className="flex items-center gap-2">
                 {draftStatus === 'restored' && (
@@ -443,15 +568,46 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                     <span>Draft restored</span>
                   </span>
                 )}
+                {draftStatus === 'pending' && (
+                  <span role="status" className="flex items-center gap-1 text-[10px] text-amber-300 font-medium">
+                    <Save className="h-3 w-3" /> Draft changes pending save
+                  </span>
+                )}
                 {draftStatus === 'saved' && (
                   <span className="flex items-center gap-1 text-[10px] text-cyan-400/90 font-medium">
                     <Save className="h-3 w-3 text-cyan-400" />
                     <span>Saved locally</span>
                   </span>
                 )}
-                <span className="text-[10px] text-zinc-500 uppercase">UTF-8 · Interactive Sandbox</span>
+                <span className="text-[10px] text-zinc-500 uppercase">{isRepositoryWorkspace ? 'Local draft · Read-only GitHub' : 'UTF-8 · Interactive Sandbox'}</span>
               </div>
             </div>
+
+            {isRepositoryWorkspace && (
+              <div className="border-b border-zinc-800/60 p-2">
+                <div className="mb-1 px-2 text-[10px] uppercase tracking-wide text-zinc-500">File explorer</div>
+                <div role="tree" aria-label="Student repository files" className="max-h-36 overflow-y-auto">
+                  {fileList.map((fileName) => {
+                    const depth = fileName.split('/').length - 1;
+                    return (
+                      <button
+                        key={fileName}
+                        type="button"
+                        role="treeitem"
+                        aria-selected={activeFileName === fileName}
+                        onClick={() => setActiveFileName(fileName)}
+                        style={{ paddingLeft: `${10 + depth * 16}px` }}
+                        className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[11px] font-mono hover:bg-zinc-900 ${activeFileName === fileName ? 'text-cyan-200' : 'text-zinc-400'}`}
+                      >
+                        {getFileIcon(fileName)}
+                        <span className="min-w-0 flex-1 truncate">{fileName.split('/').pop()}</span>
+                        {dirtyFiles.has(fileName) && <span aria-label="Modified draft" className="h-1.5 w-1.5 rounded-full bg-amber-400" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* File Tabs */}
             <div className="flex items-center overflow-x-auto px-2 pt-1 gap-1">
@@ -512,6 +668,19 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
           {/* Action Bar */}
           <div className="p-3 bg-zinc-950/90 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
+              {isRepositoryWorkspace && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={resetActiveRepositoryFile}
+                  disabled={!dirtyFiles.has(activeFileName) || isRunningCode}
+                  className="h-8 px-3 text-xs font-mono border-amber-800/60 bg-amber-950/20 text-amber-200 hover:bg-amber-950/50"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />Reset local draft
+                </Button>
+              )}
+
               <Button
                 type="button"
                 variant="outline"
@@ -528,7 +697,17 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                 <span>Run Code</span>
               </Button>
 
-              <Button
+              {isRepositoryWorkspace && <>
+                <Button type="button" variant="outline" size="sm" onClick={() => void projectRuntimeAction('start')} disabled={runtimeBusy} className="h-8 px-3 text-xs font-mono border-emerald-800/60 bg-emerald-950/20 text-emerald-200">
+                  {runtimeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}Run Project (installs dependencies)
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void projectRuntimeAction('status')} disabled={runtimeBusy} className="h-8 px-3 text-xs font-mono">Refresh Status</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void projectRuntimeAction('stop')} disabled={runtimeBusy} className="h-8 px-3 text-xs font-mono">Stop Project</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void projectRuntimeAction('logs')} disabled={runtimeBusy} className="h-8 px-3 text-xs font-mono">Runtime Logs</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void projectRuntimeAction('preview')} disabled={runtimeBusy} className="h-8 px-3 text-xs font-mono">Open Preview</Button>
+              </>}
+
+              {!isRepositoryWorkspace && <Button
                 type="button"
                 variant="outline"
                 size="sm"
@@ -542,7 +721,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                   <FlaskConical className="h-3.5 w-3.5 text-cyan-400" />
                 )}
                 <span>Run Sample Tests</span>
-              </Button>
+              </Button>}
 
               <button
                 type="button"
@@ -561,7 +740,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
               <span className="hidden sm:inline text-[11px] font-mono text-zinc-500">
                 Ctrl+Enter
               </span>
-              <Button
+              {!isRepositoryWorkspace && <Button
                 onClick={handleSubmit}
                 disabled={loading || isRunningCode || isRunningTests}
                 className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs h-8 px-4 gap-2 shadow-lg shadow-cyan-500/20"
@@ -577,7 +756,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                     <span>Submit PR</span>
                   </>
                 )}
-              </Button>
+              </Button>}
             </div>
           </div>
 
@@ -587,7 +766,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
               {/* Console Tabs */}
               <div className="flex items-center justify-between border-b border-zinc-800/80 px-3 py-1.5 bg-zinc-900/60">
                 <div className="flex items-center gap-2">
-                  <button
+                  {!isRepositoryWorkspace && <button
                     type="button"
                     onClick={() => setActiveConsoleTab('sampleTests')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors ${
@@ -607,7 +786,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                         {sampleTestResults.passed_samples}/{sampleTestResults.total_samples}
                       </span>
                     )}
-                  </button>
+                  </button>}
 
                   <button
                     type="button"
@@ -743,6 +922,8 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
                   </div>
                 ) : (
                   <div className="space-y-3">
+                    {isRepositoryWorkspace && runtimeStatus && <div className="rounded border border-cyan-900/60 bg-cyan-950/20 px-3 py-2 text-cyan-200">Project status: {runtimeStatus}</div>}
+                    {runtimeLogs && <pre className="rounded border border-zinc-800 bg-zinc-900 p-3 text-[11px] text-zinc-300 whitespace-pre-wrap overflow-x-auto">{runtimeLogs}</pre>}
                     {showStdinInput && (
                       <div className="p-2.5 rounded bg-zinc-900 border border-zinc-800 space-y-1">
                         <label className="text-[10px] text-zinc-400 font-bold uppercase block">
@@ -801,7 +982,7 @@ export default function TaskEditor({ task, userId, initialSubmission }: TaskEdit
       </div>
 
       {/* RIGHT PANEL: Live Pipeline & Review Panel (3 cols) */}
-      <div className="lg:col-span-3 space-y-4">
+      <div className={`${isRepositoryWorkspace ? 'hidden' : 'lg:col-span-3'} space-y-4`}>
         {loading && (
           <div className="rounded-xl border border-cyan-500/40 bg-zinc-900/90 p-5 shadow-2xl space-y-4 font-mono text-xs animate-pulse">
             <div className="flex items-center gap-2 text-cyan-400 font-bold">

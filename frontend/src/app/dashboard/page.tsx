@@ -6,6 +6,7 @@ import { getPersonaConfig, formatTicketId, getSprintMetrics } from '@/lib/compan
 import GenerateTaskButton from './GenerateTaskButton';
 import StartNewProjectButton from './StartNewProjectButton';
 import AssignmentInbox, { AssignmentItem } from './AssignmentInbox';
+import GitHubConnectionPanel from './GitHubConnectionPanel';
 import Link from 'next/link';
 import { 
   Building2, 
@@ -277,6 +278,9 @@ export default async function DashboardPage() {
             )}
           </div>
         </div>
+
+        {/* GitHub Engineering Workspace Connection Panel */}
+        <GitHubConnectionPanel />
 
         {/* Project Overview & Ticket Sequence Lifecycle Track */}
         {activeProject && (

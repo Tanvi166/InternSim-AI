@@ -27,11 +27,35 @@ def get_task(
             if proj_res.data and proj_res.data[0]["user_id"] != authenticated_user_id:
                 raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
         else:
-            # Standalone task without project_id: check if submissions exist
-            # If another user has worked on this standalone task, block access to prevent cross-tenant inspection
-            sub_res = supabase.table("submissions").select("user_id").eq("task_id", task_id).limit(1).execute()
-            if sub_res.data and sub_res.data[0]["user_id"] != authenticated_user_id:
-                raise HTTPException(status_code=403, detail="Access denied: You do not own this standalone ticket.")
+            # Standalone task without project_id: check direct user_id first if column exists
+            if task_data.get("user_id"):
+                if task_data["user_id"] != authenticated_user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Access denied: You do not own this standalone ticket."
+                    )
+            else:
+                # Fallback to submission history for unmigrated legacy standalone tasks
+                sub_res = (
+                    supabase.table("submissions")
+                    .select("user_id")
+                    .eq("task_id", task_id)
+                    .order("created_at", desc=False)
+                    .execute()
+                )
+                if sub_res.data:
+                    distinct_users = list(dict.fromkeys(s["user_id"] for s in sub_res.data))
+                    if len(distinct_users) > 1:
+                        # Multi-owner legacy ambiguity: fail closed to prevent cross-tenant inspection
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Access denied: Ownership ambiguity on legacy standalone ticket. Task access is locked pending migration."
+                        )
+                    elif distinct_users[0] != authenticated_user_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Access denied: You do not own this standalone ticket."
+                        )
 
     # Multi-file support: build file structure
     lang = (task_data.get("language") or "python").lower()

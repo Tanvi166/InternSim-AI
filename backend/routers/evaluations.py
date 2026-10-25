@@ -397,10 +397,33 @@ async def submit_code(
         if proj_res.data and proj_res.data[0]["user_id"] != submission.user_id:
             raise HTTPException(status_code=403, detail="Access denied: You do not own the project associated with this ticket.")
     else:
-        # Standalone task: ensure caller owns existing submissions on this task
-        sub_res = supabase.table("submissions").select("user_id").eq("task_id", submission.task_id).limit(1).execute()
-        if sub_res.data and sub_res.data[0]["user_id"] != submission.user_id:
-            raise HTTPException(status_code=403, detail="Access denied: You do not own this standalone ticket.")
+        # Standalone task without project_id:
+        # Check direct ownership on task record first if column exists
+        if task.get("user_id"):
+            if task["user_id"] != submission.user_id:
+                raise HTTPException(status_code=403, detail="Access denied: You do not own this standalone ticket.")
+        else:
+            # Legacy standalone task without direct user_id: inspect submission history
+            sub_res = (
+                supabase.table("submissions")
+                .select("user_id")
+                .eq("task_id", submission.task_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+            if sub_res.data:
+                distinct_users = list(dict.fromkeys(s["user_id"] for s in sub_res.data))
+                if len(distinct_users) > 1:
+                    # Multi-owner legacy ambiguity: fail closed
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Access denied: Ownership ambiguity on legacy standalone ticket. Task is locked pending migration."
+                    )
+                elif distinct_users[0] != submission.user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Access denied: You do not own this standalone ticket."
+                    )
 
     # Validate multi-file paths
     from services.file_service import validate_and_normalize_files
@@ -464,7 +487,7 @@ async def submit_code(
             tc_in = tc.get("input", "")
             expected = tc.get("expected_output", "")
             harness_code = build_harness_code(submission.language, submission.submitted_code, tc_in)
-            piston_res = await execute_code(submission.language, version, harness_code, stdin=tc_in)
+            piston_res = await execute_code(submission.language, version, harness_code, stdin=tc_in, files=piston_files)
             
             run_data = piston_res.get("run", {})
             stdout = run_data.get("stdout", "").strip()
@@ -484,7 +507,7 @@ async def submit_code(
     prompt = f"""
     Evaluate the following {submission.language} code for code quality on a scale of 1-5 for each metric.
     
-    Task Description: {task['description']}
+    Task Description: {task.get('description', '')}
     
     Submitted Code:
     ```
@@ -531,6 +554,28 @@ async def submit_code(
         raise HTTPException(status_code=500, detail="Failed to save submission")
         
     saved_sub = sub_res.data[0]
+
+    # Concurrency verification for standalone tasks:
+    # Query earliest submissions for this task. If another user committed a prior claim concurrently,
+    # roll back this submission immediately and fail closed with 403 Forbidden.
+    if not task.get("project_id"):
+        audit_res = (
+            supabase.table("submissions")
+            .select("submission_id, user_id")
+            .eq("task_id", submission.task_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        if audit_res.data and audit_res.data[0]["user_id"] != submission.user_id:
+            # Delete concurrent conflicting submission to prevent corrupting ownership history
+            try:
+                supabase.table("submissions").delete().eq("submission_id", saved_sub["submission_id"]).execute()
+            except Exception as del_err:
+                print(f"[CONCURRENCY ROLLBACK FAILED]: {del_err}")
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Task was concurrently claimed by another user."
+            )
     
     # 5. Project completion check
     # If the task belongs to a project and passed (correctness >= 40), check if project target tickets are satisfied
@@ -582,6 +627,10 @@ async def submit_code(
 
 @router.post("/run", response_model=CodeRunResult)
 async def run_code_preview(req: CodeRunRequest):
+    return await run_code_preview_with_options(req, allow_local_fallback=True)
+
+
+async def run_code_preview_with_options(req: CodeRunRequest, *, allow_local_fallback: bool):
     """
     Executes submitted code directly in Piston/local sandbox with custom stdin.
     Supports multi-file projects with safe relative path validation.
@@ -597,7 +646,17 @@ async def run_code_preview(req: CodeRunRequest):
         raise HTTPException(status_code=400, detail=str(ve))
 
     try:
-        piston_res = await execute_code(lang, version, req.code, stdin=req.stdin or "", files=piston_files)
+        if allow_local_fallback:
+            piston_res = await execute_code(lang, version, req.code, stdin=req.stdin or "", files=piston_files)
+        else:
+            piston_res = await execute_code(
+                lang,
+                version,
+                req.code,
+                stdin=req.stdin or "",
+                files=piston_files,
+                allow_local_fallback=False,
+            )
         run_data = piston_res.get("run", {})
         stdout = run_data.get("stdout", "")
         stderr = run_data.get("stderr", "")
@@ -702,7 +761,7 @@ async def run_sample_tests(req: SampleTestsRequest):
             tc_in = tc.get("input", "")
             expected = tc.get("expected_output", "")
             harness_code = build_harness_code(lang, req.code, tc_in)
-            piston_res = await execute_code(lang, version, harness_code, stdin=tc_in)
+            piston_res = await execute_code(lang, version, harness_code, stdin=tc_in, files=piston_files)
 
             run_data = piston_res.get("run", {})
             stdout = run_data.get("stdout", "").strip()

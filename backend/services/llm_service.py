@@ -3,8 +3,54 @@ import json
 import re
 from pathlib import Path
 from dotenv import load_dotenv
-from groq import Groq
-from google import genai
+try:
+    from groq import Groq
+except ImportError:  # pragma: no cover
+    class Groq:
+        def __init__(self, api_key: str = None):
+            self.api_key = api_key
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(*args, **kwargs):
+                    # Return a minimal structure mimicking Groq response
+                    class Message:
+                        def __init__(self):
+                            self.content = "{}"
+                    class Choice:
+                        def __init__(self):
+                            self.message = Message()
+                    class Response:
+                        def __init__(self):
+                            self.choices = [Choice()]
+                    return Response()
+
+try:
+    from google import genai
+except ImportError:  # pragma: no cover
+    class _StubGeminiClient:
+        def __init__(self, api_key: str = None):
+            self.api_key = api_key
+
+        class models:
+            @staticmethod
+            async def generate_content(*args, **kwargs):
+                # Return a minimal object with a .text attribute
+                class Resp:
+                    text = "{}"
+                return Resp()
+
+    class genai:
+        class Client:
+            def __init__(self, api_key: str = None):
+                self._client = _StubGeminiClient(api_key)
+
+            def __call__(self, *args, **kwargs):
+                return self._client
+
+            def __getattr__(self, name):
+                return getattr(self._client, name)
 from pydantic import BaseModel
 from typing import Type, TypeVar, Any
 

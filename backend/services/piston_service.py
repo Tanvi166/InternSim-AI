@@ -1,9 +1,12 @@
 import httpx
 import sys
 import subprocess
+import logging
+import os
 from typing import List, Dict, Any, Optional
 
-PISTON_API_URL = "https://emkc.org/api/v2/piston"
+PISTON_API_URL = os.getenv("PISTON_API_URL", "https://emkc.org/api/v2/piston").rstrip("/")
+logger = logging.getLogger(__name__)
 
 async def get_runtimes():
     try:
@@ -20,11 +23,12 @@ async def execute_code(
     code: str, 
     run_args: List[str] = None, 
     stdin: str = "",
-    files: Optional[List[Dict[str, str]]] = None
+    files: Optional[List[Dict[str, str]]] = None,
+    allow_local_fallback: bool = True,
 ) -> Dict[str, Any]:
     """
-    Executes code using Piston API, with fallback to local Python subprocess execution if Piston is unreachable.
-    Supports both single-file and multi-file project buffers.
+    Executes code using Piston API, optionally falling back to local Python subprocess execution.
+    Repository workspace calls disable that fallback so draft code never executes on the backend host.
     """
     # Build files array for Piston
     main_ext = "py" if language.lower() in ["python", "py"] else ("js" if language.lower() in ["javascript", "js"] else language)
@@ -52,15 +56,50 @@ async def execute_code(
     }
     
     # 1. Attempt Remote Piston API Call (Fast 3-second timeout)
+    response = None
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.post(f"{PISTON_API_URL}/execute", json=payload)
-            if response.status_code == 200:
+    except httpx.TimeoutException as exc:
+        logger.warning("Piston execution unavailable category=timeout error_type=%s", type(exc).__name__)
+    except httpx.ConnectError as exc:
+        logger.warning("Piston execution unavailable category=connection_error error_type=%s", type(exc).__name__)
+    except httpx.RequestError as exc:
+        logger.warning("Piston execution unavailable category=request_error error_type=%s", type(exc).__name__)
+    except Exception as exc:
+        # Log only the exception class. Exception text may contain request details.
+        logger.error("Piston execution unavailable category=client_error error_type=%s", type(exc).__name__)
+
+    if response is not None:
+        if response.status_code != 200:
+            logger.warning(
+                "Piston execution unavailable category=http_status status=%d",
+                response.status_code,
+            )
+        else:
+            try:
                 res_data = response.json()
-                if "run" in res_data and (res_data["run"].get("stdout") or res_data["run"].get("stderr")):
+            except (ValueError, TypeError):
+                logger.warning("Piston execution unavailable category=invalid_json status=200")
+            else:
+                run_data = res_data.get("run") if isinstance(res_data, dict) else None
+                if not isinstance(run_data, dict):
+                    logger.warning("Piston execution unavailable category=invalid_response status=200")
+                elif (
+                    not allow_local_fallback
+                    or run_data.get("stdout")
+                    or run_data.get("stderr")
+                ):
                     return res_data
-    except Exception as e:
-        print(f"[PISTON API UNREACHABLE/TIMEOUT]: {e}. Using local execution fallback...")
+
+    if not allow_local_fallback:
+        return {
+            "run": {
+                "stdout": "",
+                "stderr": "Remote sandbox is unavailable; local execution fallback is disabled.",
+                "code": -1,
+            }
+        }
 
     # 2. Local Fallback Execution for Python
     if language.lower() in ["python", "py"]:

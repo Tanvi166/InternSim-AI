@@ -6,3 +6,4 @@ groq
 google-genai
 httpx
 python-dotenv
+docker

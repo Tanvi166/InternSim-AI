@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import tasks, evaluations, projects
+from routers import tasks, evaluations, projects, github
 
 app = FastAPI(title="InternSim AI Backend", version="1.0.0")
 
@@ -22,6 +22,7 @@ app.add_middleware(
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(evaluations.router, prefix="/api/evaluations", tags=["evaluations"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
+app.include_router(github.router, prefix="/api/github", tags=["github"])
 
 @app.get("/")
 def read_root():

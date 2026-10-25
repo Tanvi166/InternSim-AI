@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nexora Platform Engineering · InternSim AI",
-  description: "Simulated software company environment for backend and platform engineers.",
+  title: "InternSim AI · Engineering Workspace",
+  description: "Practice engineering workflows with project tickets, code evaluation, and GitHub workspaces.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { formatTicketId } from '@/lib/companyConfig';
 import { StatusBadge } from '@/components/StatusBadge';
 import { 
   Inbox, 
@@ -15,8 +14,6 @@ import {
   Sparkles, 
   FileText, 
   RotateCcw,
-  Calendar,
-  Layers,
   ChevronRight,
   Filter
 } from 'lucide-react';
@@ -27,12 +24,10 @@ export interface AssignmentItem {
   title: string;
   description: string;
   category: 'bug-fix' | 'feature-dev' | 'refactor' | 'documentation';
-  priority: 'P0 CRITICAL' | 'P1 HIGH' | 'P2 MEDIUM';
   status: 'inbox' | 'in_progress' | 'review_requested' | 'completed';
   language: string;
   difficultyLevel: number;
   projectTitle?: string;
-  dueDateLabel?: string;
   lastScore?: number | null;
   lastCorrectness?: number | null;
   lastQuality?: number | null;
@@ -110,28 +105,6 @@ export default function AssignmentInbox({ assignments, activeTaskId }: Assignmen
     }
   };
 
-  const getPriorityBadge = (priority: string) => {
-    if (priority.includes('P0')) {
-      return (
-        <span className="px-1.5 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-400 font-bold text-[10px]">
-          {priority}
-        </span>
-      );
-    }
-    if (priority.includes('P1')) {
-      return (
-        <span className="px-1.5 py-0.5 rounded bg-amber-950 border border-amber-800 text-amber-400 font-bold text-[10px]">
-          {priority}
-        </span>
-      );
-    }
-    return (
-      <span className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 font-medium text-[10px]">
-        {priority}
-      </span>
-    );
-  };
-
   const getStatusBadge = (status: AssignmentItem['status']) => {
     switch (status) {
       case 'inbox':
@@ -141,7 +114,7 @@ export default function AssignmentInbox({ assignments, activeTaskId }: Assignmen
       case 'review_requested':
         return <StatusBadge status="warning" label="Revision Needed" />;
       case 'completed':
-        return <StatusBadge status="passed" label="Completed & Merged" />;
+        return <StatusBadge status="passed" label="Evaluation passed" />;
     }
   };
 
@@ -155,7 +128,7 @@ export default function AssignmentInbox({ assignments, activeTaskId }: Assignmen
             <span>Engineering Assignment Inbox</span>
           </div>
           <h2 className="text-xl font-bold text-zinc-100 tracking-tight">
-            Sprint Assignments & Tickets
+            Project Assignments & Tickets
           </h2>
           <p className="text-xs text-zinc-400 font-mono mt-0.5">
             Active engineering tasks, bug investigations, and pull request reviews assigned to you.
@@ -280,17 +253,10 @@ export default function AssignmentInbox({ assignments, activeTaskId }: Assignmen
                       {assignment.formattedId}
                     </span>
                     {getCategoryBadge(assignment.category)}
-                    {getPriorityBadge(assignment.priority)}
                     {getStatusBadge(assignment.status)}
                   </div>
 
                   <div className="flex items-center gap-3 text-[11px] text-zinc-500">
-                    {assignment.dueDateLabel && (
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3 text-zinc-400" />
-                        <span>Due: {assignment.dueDateLabel}</span>
-                      </span>
-                    )}
                     <span>Tier Lvl {assignment.difficultyLevel}</span>
                     <span className="uppercase">{assignment.language}</span>
                   </div>

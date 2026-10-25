@@ -88,7 +88,7 @@ export function OnboardingForm({ initialError, completeOnboardingAction }: Onboa
           Select Your Engineering Squad
         </h1>
         <p className="text-xs text-zinc-400 font-mono mt-1">
-          Configure your team placement and initial difficulty tier at Nexora Platform Engineering.
+          Choose an engineering track and set your starting difficulty.
         </p>
       </div>
 

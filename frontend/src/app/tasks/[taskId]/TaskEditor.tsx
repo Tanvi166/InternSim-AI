@@ -987,7 +987,7 @@ export default function TaskEditor({ task, userId, initialSubmission, repository
           <div className="rounded-xl border border-cyan-500/40 bg-zinc-900/90 p-5 shadow-2xl space-y-4 font-mono text-xs animate-pulse">
             <div className="flex items-center gap-2 text-cyan-400 font-bold">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>CI/CD Evaluation Pipeline</span>
+              <span>Code evaluation</span>
             </div>
 
             <div className="space-y-2">
@@ -1062,7 +1062,7 @@ export default function TaskEditor({ task, userId, initialSubmission, repository
               <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <h4 className="text-xs font-mono font-bold text-zinc-200 flex items-center gap-1.5">
                   <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-                  <span>Senior Reviewer Comments</span>
+                  <span>Automated feedback</span>
                 </h4>
                 <p className="text-xs text-zinc-300 leading-relaxed font-sans bg-zinc-950/80 p-3 rounded-lg border border-zinc-800">
                   {result.feedback.comments || 'No specific feedback provided.'}

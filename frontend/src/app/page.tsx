@@ -6,15 +6,8 @@ import {
   ArrowRight, 
   CheckCircle2, 
   XCircle, 
-  Cpu, 
-  GitPullRequest, 
-  ShieldCheck, 
-  Layers, 
-  Code2, 
   FileCode2, 
   ChevronRight,
-  Zap,
-  Building2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -49,14 +42,14 @@ export default async function Home() {
       bgColor: 'bg-cyan-950/20',
       featured: true,
       points: [
-        'Real sprint tickets derived from actual SaaS architectures',
-        'Automated execution against hidden regression suites',
-        'Instant senior engineer PR code review & readability scores',
-        'Adaptive difficulty tier progression as your code improves'
+        'AI-generated engineering tickets matched to your selected track',
+        'Run code through the available execution and evaluation workflow',
+        'Automated feedback on correctness and code quality',
+        'Difficulty progression based on evaluated submissions'
       ]
     },
     {
-      title: 'Real Engineering Team at Scale',
+      title: 'A production engineering team',
       icon: CheckCircle2,
       iconColor: 'text-emerald-400',
       borderColor: 'border-emerald-900/30',
@@ -64,21 +57,21 @@ export default async function Home() {
       points: [
         'Pick up sprint tickets from product backlog',
         'Adhere to team conventions, style, and edge cases',
-        'Pass CI/CD test suite and peer code review',
-        'Ship production-ready features safely'
+        'Validate changes with automated checks and review',
+        'Practice shipping features with engineering workflows'
       ]
     }
   ];
 
   const steps = [
-    { num: '01', title: 'Join Org', desc: 'Step into Nexora Platform Engineering as a Junior Software Engineer.' },
+    { num: '01', title: 'Set your track', desc: 'Choose a practice track and starting difficulty for your workspace.' },
     { num: '02', title: 'Get Role', desc: 'Choose your focus: Fintech Squad, Enterprise SaaS, or Applied AI.' },
-    { num: '03', title: 'Receive Ticket', desc: 'Pick up real JIRA-style tickets (e.g. PLAT-1842 Subdomain Generator).' },
+    { num: '03', title: 'Receive a ticket', desc: 'Generate a project ticket based on your track and current difficulty.' },
     { num: '04', title: 'Investigate', desc: 'Analyze specifications, constraints, edge cases, and starter codebase.' },
     { num: '05', title: 'Ship Solution', desc: 'Write clean, maintainable code directly in the integrated workspace.' },
-    { num: '06', title: 'Hidden Suite', desc: 'Run code against automated regression tests via sandbox execution.' },
-    { num: '07', title: 'Code Review', desc: 'Receive instant senior engineer PR feedback on readability and structure.' },
-    { num: '08', title: 'Level Up', desc: 'Score 75%+ across sprint submissions to automatically tier up.' }
+    { num: '06', title: 'Run and evaluate', desc: 'Execute your solution and review its correctness and quality feedback.' },
+    { num: '07', title: 'Review results', desc: 'Use the automated feedback to refine your next submission.' },
+    { num: '08', title: 'Track progress', desc: 'Follow evaluated scores and difficulty progression in your profile.' }
   ];
 
   return (
@@ -92,7 +85,7 @@ export default async function Home() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-base tracking-tight text-zinc-100">InternSim AI</span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 uppercase">Virtual Enterprise</span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 uppercase">Engineering practice</span>
             </div>
           </div>
         </div>
@@ -116,7 +109,7 @@ export default async function Home() {
       <section className="relative pt-16 pb-20 px-6 max-w-7xl mx-auto w-full text-center flex flex-col items-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-mono text-cyan-400 mb-6">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          <span>Nexora Platform Engineering System</span>
+          <span>Project-based engineering practice</span>
         </div>
 
         <h1 className="text-4xl md:text-6xl font-bold tracking-tight max-w-4xl text-zinc-100 leading-[1.15]">
@@ -127,7 +120,7 @@ export default async function Home() {
         </h1>
 
         <p className="mt-6 text-base md:text-lg text-zinc-400 max-w-2xl font-normal leading-relaxed">
-          Step into a simulated software enterprise. Receive sprint tickets, investigate bugs, ship solutions, and get instant senior PR code reviews — not algorithm puzzles.
+          Build practical experience through project tickets, code execution, automated evaluation, and a connected GitHub workspace.
         </p>
 
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4 w-full max-w-md">
@@ -151,10 +144,10 @@ export default async function Home() {
               <span className="h-3 w-3 rounded-full bg-zinc-800" />
               <span className="h-3 w-3 rounded-full bg-zinc-800" />
               <span className="h-3 w-3 rounded-full bg-zinc-800" />
-              <span className="ml-2 text-zinc-400 font-semibold">Nexora Workspace — PLAT-1842</span>
+              <span className="ml-2 text-zinc-400 font-semibold">Example workspace · sample ticket</span>
             </div>
             <div className="flex items-center gap-2">
-              <StatusBadge status="in-progress" label="Sprint Ticket · Active" />
+              <StatusBadge status="in-progress" label="Project ticket · Active" />
             </div>
           </div>
 
@@ -186,16 +179,16 @@ export default async function Home() {
               <pre className="text-zinc-300 leading-relaxed text-[11px] overflow-x-auto">
                 <span className="text-purple-400">def</span> <span className="text-blue-400">generate_subdomain</span>(company_name: <span className="text-teal-300">str</span>) -&gt; <span className="text-teal-300">str</span>:<br />
                 {"    "}<span className="text-zinc-500"># Convert to lowercase and replace space characters</span><br />
-                {"    "}<span className="text-purple-400">return</span> company_name.lower().replace(<span className="text-amber-300">" "</span>, <span className="text-amber-300">"-"</span>)
+                {"    "}<span className="text-purple-400">return</span> company_name.lower().replace(<span className="text-amber-300">&quot; &quot;</span>, <span className="text-amber-300">&quot;-&quot;</span>)
               </pre>
 
               <div className="pt-3 border-t border-zinc-800/80 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <StatusBadge status="passed" label="3/3 Tests Passed" />
-                  <span className="text-emerald-400 text-[11px]">Score: 92/100</span>
+                  <StatusBadge status="neutral" label="Example result" />
+                  <span className="text-emerald-400 text-[11px]">Evaluation preview</span>
                 </div>
                 <div className="text-[11px] text-zinc-400">
-                  Reviewed by <span className="text-zinc-200 font-medium">Sarah Chen, Senior Backend Engineer</span>
+                  <span className="text-zinc-200 font-medium">Automated code feedback</span>
                 </div>
               </div>
             </div>
@@ -256,7 +249,7 @@ export default async function Home() {
             How the Simulation Works
           </h2>
           <p className="mt-3 text-zinc-400 text-sm md:text-base">
-            From onboarding to senior review — experience the complete software delivery lifecycle.
+              From onboarding to automated evaluation — practice a connected software delivery workflow.
           </p>
         </div>
 
@@ -282,7 +275,7 @@ export default async function Home() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-zinc-800/80 bg-zinc-950 py-8 px-6 text-xs text-zinc-500 font-mono text-center">
-        <p>Nexora Platform Engineering System · Powered by InternSim AI</p>
+        <p>InternSim AI · Project-based engineering practice</p>
       </footer>
     </div>
   );

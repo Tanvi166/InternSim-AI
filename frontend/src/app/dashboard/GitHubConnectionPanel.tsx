@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -11,12 +11,10 @@ import {
   ExternalLink,
   Loader2,
   FolderGit2,
-  Lock,
   Unlink,
   ShieldCheck,
   RefreshCw,
   Folder,
-  FileText,
   ChevronRight,
   ArrowUp,
   FileCode2
@@ -77,7 +75,9 @@ interface StudentProjectTextFile {
 
 export default function GitHubConnectionPanel() {
   const [status, setStatus] = useState<GitHubStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -98,13 +98,13 @@ export default function GitHubConnectionPanel() {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
-  const getAuthToken = async () => {
+  const getAuthToken = useCallback(async () => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     return session?.access_token;
-  };
+  }, []);
 
-  const fetchStudentFork = async () => {
+  const fetchStudentFork = useCallback(async () => {
     try {
       setCheckingFork(true);
       const token = await getAuthToken();
@@ -121,61 +121,86 @@ export default function GitHubConnectionPanel() {
         throw new Error(err.detail || 'Could not check your project copy.');
       }
       setStudentFork(await res.json());
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error('Project copy status unavailable', {
         description: err instanceof Error ? err.message : 'Please try again.'
       });
     } finally {
       setCheckingFork(false);
     }
-  };
+  }, [apiUrl, getAuthToken]);
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+      setStatusError('GitHub status check timed out. Check the backend connection and try again.');
+      setLoading(false);
+    }, 20_000);
     try {
       setLoading(true);
+      setStatusError(null);
       const token = await getAuthToken();
-      if (!token) return;
+      if (controller.signal.aborted) return;
+      if (!token) throw new Error('Your sign-in session is unavailable. Sign in again and retry.');
 
       const res = await fetch(`${apiUrl}/api/github/status`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
-      if (res.ok) {
-        const data = await res.json();
-        setStatus(data);
-        if (data.connected) void fetchStudentFork();
-        else setStudentFork(null);
+      if (controller.signal.aborted) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Could not check your GitHub connection.');
       }
+      const data: GitHubStatus = await res.json();
+      setStatus(data);
+      if (data.connected) void fetchStudentFork();
+      else setStudentFork(null);
     } catch (err) {
-      console.error('Failed to fetch GitHub status:', err);
+      setStatusError(controller.signal.aborted
+        ? 'GitHub status check timed out. Check the backend connection and try again.'
+        : err instanceof Error ? err.message : 'Could not check your GitHub connection.');
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeoutId);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  };
+  }, [apiUrl, fetchStudentFork, getAuthToken]);
 
   const fetchRepositories = async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+      setRepositoriesError('Repository loading timed out. Check the backend and GitHub connection, then retry.');
+      setLoadingRepos(false);
+    }, 20_000);
     try {
       setLoadingRepos(true);
+      setRepositoriesError(null);
+      setShowRepos(true);
       const token = await getAuthToken();
-      if (!token) return;
+      if (controller.signal.aborted) return;
+      if (!token) throw new Error('Your sign-in session is unavailable. Sign in again and retry.');
 
       const res = await fetch(`${apiUrl}/api/github/repositories`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
-      if (res.ok) {
-        const data: Repository[] = await res.json();
-        setRepositories(data);
-        setSelectedRepository((selected) =>
-          selected ? data.find((repo) => repo.id === selected.id) ?? null : null
-        );
-        setShowRepos(true);
-      } else {
+      if (controller.signal.aborted) return;
+      if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error('Failed to load repositories', { description: err.detail || 'Access denied' });
+        throw new Error(err.detail || 'Could not load authorized repositories.');
       }
-    } catch (err: any) {
-      toast.error('Network error', { description: err.message });
+      const data: Repository[] = await res.json();
+      setRepositories(data);
+      setSelectedRepository((selected) => selected ? data.find((repo) => repo.id === selected.id) ?? null : null);
+    } catch (err) {
+      setRepositoriesError(controller.signal.aborted
+        ? 'Repository loading timed out. Check the backend and GitHub connection, then retry.'
+        : err instanceof Error ? err.message : 'Could not load authorized repositories.');
     } finally {
-      setLoadingRepos(false);
+      window.clearTimeout(timeoutId);
+      if (!controller.signal.aborted) setLoadingRepos(false);
     }
   };
 
@@ -188,7 +213,7 @@ export default function GitHubConnectionPanel() {
         return;
       }
 
-      const redirectUri = `${window.location.origin}/dashboard?github_callback=true`;
+      const redirectUri = `${window.location.origin}/github?github_callback=true`;
       const res = await fetch(`${apiUrl}/api/github/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -204,8 +229,8 @@ export default function GitHubConnectionPanel() {
 
       // Redirect user to GitHub
       window.location.href = authorization_url;
-    } catch (err: any) {
-      toast.error('Connection Failed', { description: err.message });
+    } catch (err: unknown) {
+      toast.error('Connection Failed', { description: err instanceof Error ? err.message : 'Could not connect GitHub.' });
       setActionLoading(false);
     }
   };
@@ -250,8 +275,8 @@ export default function GitHubConnectionPanel() {
       } else {
         toast.error('Disconnect failed');
       }
-    } catch (err: any) {
-      toast.error('Error', { description: err.message });
+    } catch (err: unknown) {
+      toast.error('Error', { description: err instanceof Error ? err.message : 'Could not disconnect GitHub.' });
     } finally {
       setActionLoading(false);
     }
@@ -422,7 +447,7 @@ export default function GitHubConnectionPanel() {
           const token = await getAuthToken();
           if (!token) return;
 
-          const redirectUri = `${window.location.origin}/dashboard?github_callback=true`;
+          const redirectUri = `${window.location.origin}/github?github_callback=true`;
           const res = await fetch(`${apiUrl}/api/github/exchange-code`, {
             method: 'POST',
             headers: {
@@ -446,17 +471,22 @@ export default function GitHubConnectionPanel() {
             const err = await res.json().catch(() => ({}));
             toast.error('Connection Failed', { description: err.detail || 'Code exchange error.' });
           }
-        } catch (err: any) {
-          toast.error('OAuth Exchange Failed', { description: err.message });
+        } catch (err: unknown) {
+          toast.error('OAuth Exchange Failed', { description: err instanceof Error ? err.message : 'Could not finish the GitHub connection.' });
         } finally {
           setActionLoading(false);
         }
       }
     };
 
-    fetchStatus();
-    handleCallback();
-  }, []);
+    void Promise.resolve().then(() => {
+      const callbackParams = new URLSearchParams(window.location.search);
+      if (callbackParams.has('code') && callbackParams.has('state')) {
+        return handleCallback().finally(() => { void fetchStatus(); });
+      }
+      return fetchStatus();
+    });
+  }, [apiUrl, fetchStatus, fetchStudentFork, getAuthToken]);
 
   if (loading) {
     return (
@@ -520,6 +550,11 @@ export default function GitHubConnectionPanel() {
                 <span>Disconnect</span>
               </Button>
             </>
+          ) : statusError ? (
+            <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading} className="h-8 text-xs">
+              {loading ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1.5 h-3 w-3" />}
+              Retry connection check
+            </Button>
           ) : (
             <Button
               size="sm"
@@ -537,6 +572,8 @@ export default function GitHubConnectionPanel() {
           )}
         </div>
       </div>
+
+      {statusError && <div role="alert" className="flex flex-col gap-2 rounded-lg border border-rose-900/70 bg-rose-950/20 p-3 text-[11px] text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>{statusError}</span><span className="text-rose-300/70">Connection status could not be verified.</span></div>}
 
       {status?.connected && (
         <div className="flex items-center justify-between text-zinc-400 bg-zinc-950/40 p-3 rounded-lg border border-zinc-800/60 text-[11px]">
@@ -721,7 +758,14 @@ export default function GitHubConnectionPanel() {
             </button>
           </div>
 
-          {repositories.length === 0 ? (
+          {loadingRepos ? (
+            <p role="status" className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-4 text-zinc-400"><Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />Loading repositories authorized for your GitHub account…</p>
+          ) : repositoriesError ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-rose-900/70 bg-rose-950/20 p-4 text-rose-200 sm:flex-row sm:items-center sm:justify-between">
+              <p role="alert">{repositoriesError}</p>
+              <Button type="button" variant="outline" size="sm" onClick={fetchRepositories} className="h-8 text-[10px]"><RefreshCw aria-hidden="true" className="mr-1.5 h-3 w-3" />Retry repositories</Button>
+            </div>
+          ) : repositories.length === 0 ? (
             <div className="p-4 text-center text-zinc-400 bg-zinc-950/60 rounded-lg border border-zinc-800">
               No repositories found. Ensure your GitHub account has authorized repositories.
             </div>

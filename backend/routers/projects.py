@@ -162,6 +162,86 @@ def get_active_project(
             )
         raise HTTPException(status_code=500, detail=f"Database error initializing project: {str(e)}")
 
+
+@router.get("", response_model=List[ProjectResponse])
+def list_user_projects(
+    authenticated_user_id: Optional[str] = Depends(get_authenticated_user_id)
+):
+    """Return only the authenticated user's recent projects and their passed-ticket counts."""
+    if not authenticated_user_id:
+        raise HTTPException(status_code=401, detail="Authentication required to view projects.")
+
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("projects")
+        .select("*")
+        .eq("user_id", authenticated_user_id)
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+    )
+
+    projects: List[ProjectResponse] = []
+    for project in result.data or []:
+        completed_count = get_project_completed_tasks_count(
+            supabase, project["project_id"], authenticated_user_id
+        )
+        projects.append(ProjectResponse(
+            project_id=project["project_id"],
+            user_id=project["user_id"],
+            title=project["title"],
+            description=project["description"],
+            persona=project["persona"],
+            language=project["language"],
+            status=project["status"],
+            target_tickets=project["target_tickets"],
+            completed_tickets_count=completed_count,
+            created_at=project["created_at"],
+            completed_at=project.get("completed_at"),
+        ))
+    return projects
+
+
+@router.get("/{project_id}", response_model=ProjectResponse)
+def get_user_project(
+    project_id: str,
+    authenticated_user_id: Optional[str] = Depends(get_authenticated_user_id)
+):
+    """Return one project only when it belongs to the authenticated user."""
+    if not authenticated_user_id:
+        raise HTTPException(status_code=401, detail="Authentication required to view this project.")
+
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("projects")
+        .select("*")
+        .eq("project_id", project_id)
+        .eq("user_id", authenticated_user_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        # Do not reveal whether a project owned by another user exists.
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    project = result.data[0]
+    completed_count = get_project_completed_tasks_count(
+        supabase, project_id, authenticated_user_id
+    )
+    return ProjectResponse(
+        project_id=project["project_id"],
+        user_id=project["user_id"],
+        title=project["title"],
+        description=project["description"],
+        persona=project["persona"],
+        language=project["language"],
+        status=project["status"],
+        target_tickets=project["target_tickets"],
+        completed_tickets_count=completed_count,
+        created_at=project["created_at"],
+        completed_at=project.get("completed_at"),
+    )
+
 @router.post("/new", response_model=ProjectResponse)
 def start_new_project(
     request: ProjectCreateRequest,

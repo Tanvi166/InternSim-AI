@@ -1,23 +1,16 @@
 import { createClient } from '@/utils/supabase/server';
 import { redirect } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
-import { getPersonaConfig, getSprintMetrics, formatTicketId } from '@/lib/companyConfig';
+import { getPersonaConfig, formatTicketId } from '@/lib/companyConfig';
 import ProgressCharts from './ProgressCharts';
-import Link from 'next/link';
 import { 
   TrendingUp, 
-  Award, 
-  CheckCircle2, 
   ShieldCheck, 
-  Terminal, 
-  Layers,
-  Sparkles,
   BarChart3,
   ArrowUpRight,
   ArrowDownRight,
   Minus,
   HelpCircle,
-  Briefcase,
   AlertCircle
 } from 'lucide-react';
 
@@ -58,7 +51,6 @@ export default async function ProgressPage() {
   const safeSubmissions = submissions || [];
   const totalSubmissions = safeSubmissions.length;
   const personaConfig = getPersonaConfig(profile.chosen_persona);
-  const { sprint, sprintProgress } = getSprintMetrics(totalSubmissions);
 
   // Fetch active project
   let activeProject: any = null;
@@ -176,7 +168,7 @@ export default async function ProgressPage() {
 
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="px-3 py-1 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-semibold">
-              Sprint {sprint} Active
+              Based on your evaluated submissions
             </span>
           </div>
         </div>
@@ -291,7 +283,7 @@ export default async function ProgressPage() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-zinc-100 tracking-tight">
-                Recent Evaluated Sprint Tickets (Rolling Window)
+                Recent Evaluated Tickets (Rolling Window)
               </h3>
               <p className="text-xs text-zinc-400 mt-0.5">
                 Latest distinct tickets factored into your adaptive difficulty tier
@@ -324,7 +316,7 @@ export default async function ProgressPage() {
                           {formatTicketId(sub.task_id)}
                         </td>
                         <td className="py-2.5 max-w-xs truncate font-sans">
-                          {sub.tasks?.title || 'Sprint Ticket'}
+                          {sub.tasks?.title || 'Engineering ticket'}
                         </td>
                         <td className="py-2.5 text-emerald-400 font-semibold">
                           {sub.correctness_score}/60

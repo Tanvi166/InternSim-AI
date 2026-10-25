@@ -40,7 +40,7 @@ export function AuthForm({ initialError, loginAction, signupAction }: AuthFormPr
           <Terminal className="h-5 w-5" />
         </div>
         <h2 className="text-xl font-bold text-zinc-100 tracking-tight">
-          Nexora Platform Engineering
+          InternSim AI
         </h2>
         <p className="text-xs text-zinc-400 font-mono mt-1">
           Access your virtual engineering workspace
@@ -95,7 +95,7 @@ export function AuthForm({ initialError, loginAction, signupAction }: AuthFormPr
               id="email"
               name="email"
               type="email"
-              placeholder="engineer@nexora.internal"
+              placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -140,7 +140,7 @@ export function AuthForm({ initialError, loginAction, signupAction }: AuthFormPr
             </>
           ) : (
             <>
-              <span>Join Nexora Platform</span>
+              <span>Create your account</span>
               <ShieldCheck className="h-3.5 w-3.5" />
             </>
           )}
@@ -149,7 +149,7 @@ export function AuthForm({ initialError, loginAction, signupAction }: AuthFormPr
 
       <div className="px-6 py-3 bg-zinc-950/60 border-t border-zinc-800/60 text-center">
         <p className="text-[11px] text-zinc-400 font-mono">
-          Protected by Nexora Enterprise Auth & SSO Policy
+          Sign-in is managed by your InternSim account provider
         </p>
       </div>
     </div>

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { FolderPlus, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { FolderPlus, Loader2 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
 interface StartNewProjectButtonProps {
@@ -31,8 +31,8 @@ export default function StartNewProjectButton({
     }
 
     setLoading(true);
-    toast.info('Initializing New Internship Project...', {
-      description: 'Creating project container and preparing clean engineering sprint.',
+    toast.info('Creating a new project...', {
+      description: 'Setting up a new project and ticket sequence.',
     });
 
     try {
@@ -63,8 +63,8 @@ export default function StartNewProjectButton({
       }
 
       const newProj = await res.json();
-      toast.success('New Project Initialized!', {
-        description: `Project: "${newProj.title}" is ready. Code continuity reset to fresh state.`,
+      toast.success('New project created', {
+        description: `${newProj.title} is ready for its first ticket.`,
       });
 
       router.refresh();

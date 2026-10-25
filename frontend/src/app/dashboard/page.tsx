@@ -2,11 +2,10 @@ import { createClient } from '@/utils/supabase/server';
 import { redirect } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { StatusBadge } from '@/components/StatusBadge';
-import { getPersonaConfig, formatTicketId, getSprintMetrics } from '@/lib/companyConfig';
+import { getPersonaConfig, formatTicketId } from '@/lib/companyConfig';
 import GenerateTaskButton from './GenerateTaskButton';
 import StartNewProjectButton from './StartNewProjectButton';
 import AssignmentInbox, { AssignmentItem } from './AssignmentInbox';
-import GitHubConnectionPanel from './GitHubConnectionPanel';
 import Link from 'next/link';
 import { 
   Building2, 
@@ -17,7 +16,6 @@ import {
   ShieldCheck, 
   Award,
   AlertCircle,
-  Inbox
 } from 'lucide-react';
 
 export default async function DashboardPage() {
@@ -161,7 +159,7 @@ export default async function DashboardPage() {
     }
   }
 
-  const assignmentItems: AssignmentItem[] = Array.from(allKnownTasksMap.values()).map((task, idx) => {
+  const assignmentItems: AssignmentItem[] = Array.from(allKnownTasksMap.values()).map((task) => {
     const isPassed = passedTaskIds.has(task.task_id);
     const lastSub = latestSubmissionsByTaskId.get(task.task_id);
     const attempts = attemptCountsByTaskId.get(task.task_id) || 0;
@@ -178,15 +176,6 @@ export default async function DashboardPage() {
       itemStatus = 'inbox';
     }
 
-    // Realistic assignment priority: P0 Critical for bug fixes, P1 High for active/revising, P2 Medium for queued
-    const isBug = (task.task_type || '').toLowerCase().includes('bug');
-    let priority: AssignmentItem['priority'] = 'P2 MEDIUM';
-    if (isBug && (isActive || itemStatus === 'review_requested')) {
-      priority = 'P0 CRITICAL';
-    } else if (isActive || itemStatus === 'review_requested' || isBug) {
-      priority = 'P1 HIGH';
-    }
-
     // Category mapping
     let category: AssignmentItem['category'] = 'feature-dev';
     const typeStr = (task.task_type || '').toLowerCase();
@@ -194,21 +183,16 @@ export default async function DashboardPage() {
     else if (typeStr.includes('refactor')) category = 'refactor';
     else if (typeStr.includes('doc')) category = 'documentation';
 
-    // Due date label (sprint milestone offset)
-    const dueDateLabel = `Sprint Day ${idx + 2} (EOD)`;
-
     return {
       taskId: task.task_id,
       formattedId: formatTicketId(task.task_id),
-      title: task.title || 'Sprint Ticket',
+      title: task.title || 'Engineering ticket',
       description: task.description || '',
       category,
-      priority,
       status: itemStatus,
       language: task.language || 'python',
       difficultyLevel: task.difficulty_level || 1,
       projectTitle: activeProject?.title,
-      dueDateLabel,
       lastScore: lastSub ? lastSub.total_score : null,
       lastCorrectness: lastSub ? lastSub.correctness_score : null,
       lastQuality: lastSub ? lastSub.quality_score : null,
@@ -219,13 +203,8 @@ export default async function DashboardPage() {
 
   const personaConfig = getPersonaConfig(profile.chosen_persona);
   const totalSubmissions = submissions?.length || 0;
-  const { sprint, day, sprintProgress } = getSprintMetrics(totalSubmissions);
 
   // Calculate metrics
-  const avgScore = totalSubmissions > 0 
-    ? Math.round(safeSubmissions.reduce((acc: number, cur: any) => acc + (cur.total_score || 0), 0) / totalSubmissions) 
-    : 0;
-
   const passedSubmissions = safeSubmissions.filter((s: any) => (s.correctness_score || 0) >= 40);
   const testPassRate = totalSubmissions > 0 
     ? Math.round((passedSubmissions.length / totalSubmissions) * 100) 
@@ -253,10 +232,10 @@ export default async function DashboardPage() {
               <span>{personaConfig.teamName}</span>
             </div>
             <h1 className="text-2xl font-bold text-zinc-100 tracking-tight">
-              Good morning, {user.email?.split('@')[0] || 'Engineer'}
+              Welcome back, {user.email?.split('@')[0] || 'Engineer'}
             </h1>
             <p className="text-xs text-zinc-400 font-mono mt-1">
-              Active Sprint: <span className="text-zinc-200 font-semibold">Sprint {sprint} · Day {day}</span> · {latestTask ? (activeTicketStatus === 'revising' ? 'Ticket Revision In Progress' : 'Ticket Assigned') : isProjectCompleted ? 'Project Completed' : 'Ready for Next Ticket'}
+              {profile.chosen_persona || 'Engineering track'} · {latestTask ? (activeTicketStatus === 'revising' ? 'Ticket revision in progress' : 'Ticket assigned') : isProjectCompleted ? 'Project completed' : 'Ready for a ticket'}
             </p>
           </div>
 
@@ -279,9 +258,6 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        {/* GitHub Engineering Workspace Connection Panel */}
-        <GitHubConnectionPanel />
-
         {/* Project Overview & Ticket Sequence Lifecycle Track */}
         {activeProject && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4 font-mono text-xs shadow-lg">
@@ -295,7 +271,7 @@ export default async function DashboardPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2 text-zinc-400">
-                <span>Sprint Milestone:</span>
+                  <span>Project milestone:</span>
                 <span className="font-bold text-cyan-400">
                   {activeProject.completed_tickets_count} of {activeProject.target_tickets} Tickets Passed
                 </span>
@@ -306,7 +282,7 @@ export default async function DashboardPage() {
               {activeProject.description}
             </p>
 
-            {/* Sequence of Sprint Tickets (Slots 1 to 4) */}
+            {/* Project ticket sequence */}
             <div className="pt-2">
               <span className="text-[10px] text-zinc-500 uppercase tracking-wider block mb-2 font-semibold">
                 Project Ticket Sequence ({activeProject.target_tickets} Tickets Planned)
@@ -425,7 +401,7 @@ export default async function DashboardPage() {
                 </div>
                 <span>·</span>
                 <div>
-                  Assigned Reviewer: <span className="text-zinc-200">{personaConfig.reviewerName}</span>
+                  Review method: <span className="text-zinc-200">{personaConfig.reviewerName}</span>
                 </div>
               </div>
 
@@ -449,8 +425,8 @@ export default async function DashboardPage() {
                 </h3>
                 <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed font-sans">
                   {totalSubmissions > 0
-                    ? 'All assigned tickets in your sprint queue have been completed and reviewed! Pick up your next engineering ticket to continue progression.'
-                    : 'You currently have no tickets assigned. Pick up your first ticket to start the sprint.'}
+                    ? 'There are no open tickets in this project. Pick up another ticket to continue your work.'
+                    : 'You do not have a ticket yet. Pick up your first project ticket to get started.'}
                 </p>
               </div>
               <div className="pt-2 flex justify-center">
@@ -474,32 +450,24 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Sprint Progress Bar & Stat Cards Grid */}
+        {/* Submission and evaluation summary */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {/* Stat 1: Completed Tickets */}
           <div className="p-5 rounded-xl bg-zinc-900/60 border border-zinc-800/80">
             <div className="flex items-center justify-between text-zinc-400 font-mono text-xs mb-2">
-              <span>Sprint Tickets</span>
+              <span>Submissions</span>
               <Terminal className="h-4 w-4 text-cyan-400" />
             </div>
             <div className="text-2xl font-bold text-zinc-100 font-mono">
               {totalSubmissions} <span className="text-xs text-zinc-500 font-normal">tickets</span>
             </div>
-            <div className="mt-3 w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-              <div 
-                className="bg-cyan-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${sprintProgress}%` }}
-              />
-            </div>
-            <p className="mt-1.5 text-[11px] text-zinc-500 font-mono">
-              Sprint {sprint} progress ({sprintProgress}%)
-            </p>
+            <p className="mt-3 text-[11px] text-zinc-500 font-mono">Across your account</p>
           </div>
 
           {/* Stat 2: Test Pass Rate */}
           <div className="p-5 rounded-xl bg-zinc-900/60 border border-zinc-800/80">
             <div className="flex items-center justify-between text-zinc-400 font-mono text-xs mb-2">
-              <span>Test Pass Rate</span>
+              <span>Submission pass rate</span>
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             </div>
             <div className="text-2xl font-bold text-zinc-100 font-mono">
@@ -507,7 +475,7 @@ export default async function DashboardPage() {
             </div>
             <p className="mt-3 text-[11px] text-emerald-400 font-mono flex items-center gap-1">
               <ShieldCheck className="h-3 w-3" />
-              <span>{passedSubmissions.length} of {totalSubmissions} passed suite</span>
+              <span>{passedSubmissions.length} of {totalSubmissions} submissions met the pass threshold</span>
             </p>
           </div>
 
@@ -521,7 +489,7 @@ export default async function DashboardPage() {
               {avgQuality} <span className="text-xs text-zinc-500 font-normal">/ 40</span>
             </div>
             <p className="mt-3 text-[11px] text-amber-400/90 font-mono">
-              Senior PR reviewer score average
+              Average automated feedback score
             </p>
           </div>
 
@@ -621,7 +589,7 @@ export default async function DashboardPage() {
               <AlertCircle className="h-8 w-8 text-zinc-500 mx-auto" />
               <h4 className="text-zinc-200 font-semibold text-sm">No engineering history yet</h4>
               <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                You are currently between assignments. Click "Pick Up Next Ticket" above to assign your first ticket.
+                You are between assignments. Click &quot;Pick Up Next Ticket&quot; above to get your first ticket.
               </p>
             </div>
           )}
